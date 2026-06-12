@@ -468,12 +468,12 @@ export default function QuickNotes() {
     .filter(n=>!search||n.title.toLowerCase().includes(search.toLowerCase())||n.content.toLowerCase().includes(search.toLowerCase()))
     .sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0));
 
-  // Interleave reminders between notes
+  // Always show reminder cards at top of feed + notes below
   const feedItems = [];
   const activeReminders = notes.filter(n=>n.reminder?.active);
-  if(activeReminders.length>0 && !showReminderPanel) {
-    activeReminders.forEach(n=>feedItems.push({type:"reminder",data:n}));
-  }
+  // Reminders always show at top of feed
+  activeReminders.forEach(n=>feedItems.push({type:"reminder",data:n}));
+  // Then all filtered notes
   filtered.forEach(n=>feedItems.push({type:"note",data:n}));
 
   if(locked) return <PinScreen isSetup={setupPin} onUnlock={()=>{setLocked(false);setSetupPin(false);}}/>;
@@ -552,25 +552,42 @@ export default function QuickNotes() {
         })}
       </div>
 
-      {/* Feed — reminders + notes interleaved */}
+      {/* Feed — reminders at top + notes below */}
       <div style={{padding:"0 16px 100px"}}>
-        {feedItems.length===0
+        {/* Reminder section header */}
+        {activeReminders.length>0&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,marginTop:4}}>
+            <div style={{flex:1,height:1,background:dark?"#374151":"#e9d5ff"}}/>
+            <span style={{fontSize:11,fontWeight:700,color:"#7c3aed",textTransform:"uppercase",letterSpacing:1}}>🔔 Reminders</span>
+            <div style={{flex:1,height:1,background:dark?"#374151":"#e9d5ff"}}/>
+          </div>
+        )}
+        {activeReminders.map(note=>(
+          <ReminderCard key={`r-${note.id}`} note={note}
+            onEdit={n=>{setEditing(n);setIsNew(false);}}
+            onWhatsApp={(phone,msg)=>window.open(`https://wa.me/${phone.replace(/[^0-9+]/g,"")}?text=${encodeURIComponent(msg)}`,"_blank")}
+            onDismiss={dismissReminder} dark={dark}/>
+        ))}
+        {/* Notes section header */}
+        {activeReminders.length>0&&filtered.length>0&&(
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,marginTop:4}}>
+            <div style={{flex:1,height:1,background:dark?"#374151":"#e5e7eb"}}/>
+            <span style={{fontSize:11,fontWeight:700,color:dark?"#9ca3af":"#6b7280",textTransform:"uppercase",letterSpacing:1}}>📋 Notes</span>
+            <div style={{flex:1,height:1,background:dark?"#374151":"#e5e7eb"}}/>
+          </div>
+        )}
+        {filtered.length===0&&activeReminders.length===0
           ? <div style={{textAlign:"center",padding:"60px 20px",color:subText}}>
               <div style={{fontSize:48,marginBottom:12}}>📝</div>
               <div style={{fontWeight:600}}>No notes yet</div>
               <div style={{fontSize:13}}>Tap + to create your first note</div>
             </div>
-          : feedItems.map((item,idx)=>
-              item.type==="reminder"
-                ? <ReminderCard key={`r-${item.data.id}`} note={item.data}
-                    onEdit={n=>{setEditing(n);setIsNew(false);}}
-                    onWhatsApp={(phone,msg)=>window.open(`https://wa.me/${phone.replace(/[^0-9+]/g,"")}?text=${encodeURIComponent(msg)}`,"_blank")}
-                    onDismiss={dismissReminder} dark={dark}/>
-                : <NoteCard key={`n-${item.data.id}`} note={item.data} dark={dark} globalCopy={globalCopy}
-                    onEdit={n=>{setEditing(n);setIsNew(false);}}
-                    onDelete={deleteNote} onPin={togglePin}
-                    onCopy={copyNote} onShare={shareNote}
-                    onToggleItem={toggleItem}/>
+          : filtered.map(note=>
+              <NoteCard key={`n-${note.id}`} note={note} dark={dark} globalCopy={globalCopy}
+                onEdit={n=>{setEditing(n);setIsNew(false);}}
+                onDelete={deleteNote} onPin={togglePin}
+                onCopy={copyNote} onShare={shareNote}
+                onToggleItem={toggleItem}/>
             )
         }
       </div>
