@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { LocalNotifications } from "@capacitor/local-notifications";
+import { Contacts } from "@capacitor-community/contacts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PIN_KEY     = "qnotes_pin";
@@ -28,6 +30,92 @@ const getDefaultTitle=(notes,type)=>{
 };
 const encodeNote=note=>{try{return btoa(unescape(encodeURIComponent(JSON.stringify({title:note.title,content:note.content,type:note.type,category:note.category,items:note.items.map(i=>({id:i.id,text:i.text,done:false}))}))));}catch{return null;}};
 const decodeNote=str=>{try{return JSON.parse(decodeURIComponent(escape(atob(str))));}catch{return null;}};
+
+const isRecurringReminder=(type)=>type==="birthday"||type==="anniversary";
+
+const getNextReminderDateTime=(date,time,type)=>{
+  if(!date)return null;
+  const [h,m]=(time||"23:58").split(":").map(Number);
+  const target=new Date(date);
+  target.setHours(h||0,m||0,0,0);
+  const now=new Date();
+
+  if(isRecurringReminder(type)){
+    target.setFullYear(now.getFullYear());
+    if(target<=now)target.setFullYear(now.getFullYear()+1);
+  }
+
+  return target;
+};
+
+const formatReminderDate=(date,type)=>{
+  if(!date)return "";
+  const d=new Date(date);
+
+  if(isRecurringReminder(type)){
+    return d.toLocaleDateString(undefined,{month:"long",day:"numeric"});
+  }
+
+  return d.toLocaleDateString(undefined,{year:"numeric",month:"long",day:"numeric"});
+};
+
+const getDaysUntilText=(date,time,type)=>{
+  const target=getNextReminderDateTime(date,time,type);
+  if(!target)return null;
+  const now=new Date();
+  const diffDays=Math.ceil((target-now)/(1000*60*60*24));
+  if(diffDays<=0)return "🎉 Today!";
+  if(diffDays===1)return "Tomorrow!";
+  return `${diffDays} days away`;
+};
+
+const getNotificationId=(noteId)=>{
+  const numeric=Number(String(noteId).replace(/\D/g,"").slice(-8));
+  return numeric||Math.floor(Math.random()*10000000);
+};
+
+const scheduleNativeReminder=async(note)=>{
+  try{
+    if(!note?.reminder?.active||!note.reminder.date)return;
+
+    const r=note.reminder;
+    const target=getNextReminderDateTime(r.date,r.time,r.type);
+    if(!target)return;
+
+    let permission=await LocalNotifications.checkPermissions();
+    if(permission.display!=="granted"){
+      permission=await LocalNotifications.requestPermissions();
+      if(permission.display!=="granted"){
+        alert("Notification permission was not granted.");
+        return;
+      }
+    }
+
+    const notificationId=getNotificationId(note.id);
+
+    await LocalNotifications.cancel({notifications:[{id:notificationId}]});
+
+    await LocalNotifications.schedule({
+      notifications:[{
+        id:notificationId,
+        title:r.type==="birthday"?`🎂 ${r.label}`:r.type==="anniversary"?`💍 ${r.label}`:`🔔 ${r.label}`,
+        body:r.phone?"Tap to open the app and send your WhatsApp message.":"Reminder time!",
+        schedule:{
+          at:target,
+          repeats:isRecurringReminder(r.type),
+          allowWhileIdle:true
+        },
+        extra:{
+          noteId:note.id,
+          phone:r.phone,
+          message:r.message
+        }
+      }]
+    });
+  }catch(err){
+    console.log("Native notification scheduling failed:",err);
+  }
+};
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 function Toast({msg,onDone}){
@@ -92,6 +180,168 @@ function PinScreen({onUnlock,isSetup}){
 
 // ── Reminder Modal ────────────────────────────────────────────────────────────
 function ReminderModal({note,onSave,onClose,dark}){
+  const [type,setType]=useState(note.reminder?.type||"once");
+  const [date,setDate]=useState(note.reminder?.date||"");
+  const [time,setTime]=useState(note.reminder?.time||"23:58");
+  const [phone,setPhone]=useState(note.reminder?.phone||"");
+  const [contactName,setContactName]=useState(note.reminder?.contactName||"");
+  const [message,setMessage]=useState(note.reminder?.message||`🎉 ${note.title||"Reminder"}!\n\nJust thinking of you today 😊`);
+  const [label,setLabel]=useState(note.reminder?.label||note.title||"Reminder");
+
+  const inp={background:dark?"#374151":"#f9fafb",border:`1px solid ${dark?"#4b5563":"#e5e7eb"}`,borderRadius:10,padding:"10px 14px",fontSize:14,color:dark?"#f9fafb":"#111",fontFamily:"inherit",width:"100%",boxSizing:"border-box",outline:"none"};
+  const bg=dark?"#1f2937":"#fff";
+  const textColor=dark?"#f9fafb":"#111";
+  const subText=dark?"#9ca3af":"#6b7280";
+  const lbl={display:"block",fontSize:12,fontWeight:700,color:subText,marginBottom:8,textTransform:"uppercase"};
+
+  const pickContact=async()=>{
+    try{
+      if(!Contacts?.getContacts){
+        alert("Native contacts plugin is not available. Please run npx cap sync android and rebuild the APK.");
+        return;
+      }
+
+      let permission={contacts:"granted"};
+
+      if(Contacts.checkPermissions){
+        permission=await Contacts.checkPermissions();
+      }
+
+      if(permission.contacts!=="granted"&&Contacts.requestPermissions){
+        permission=await Contacts.requestPermissions();
+      }
+
+      if(permission.contacts!=="granted"){
+        alert("Contacts permission not granted. Please allow Contacts permission in app settings.");
+        return;
+      }
+
+      const result=await Contacts.getContacts({
+        projection:{
+          name:true,
+          phones:true
+        }
+      });
+
+      const contacts=result.contacts||[];
+      const usableContacts=contacts
+        .map(c=>{
+          const name=c.name?.display||[c.name?.given,c.name?.family].filter(Boolean).join(" ")||c.displayName||"Unknown Contact";
+          const number=c.phones?.[0]?.number||c.phoneNumbers?.[0]?.number||c.tel?.[0]||"";
+          return {name,number};
+        })
+        .filter(c=>c.number);
+
+      if(usableContacts.length===0){
+        alert("No contacts with phone numbers found.");
+        return;
+      }
+
+      const max=Math.min(usableContacts.length,50);
+      const list=usableContacts.slice(0,max).map((c,i)=>`${i+1}. ${c.name} - ${c.number}`).join("\n");
+      const choice=prompt(`Select contact number:\n\n${list}\n\nEnter number 1-${max}:`);
+      const index=Number(choice)-1;
+
+      if(isNaN(index)||index<0||index>=max)return;
+
+      const selected=usableContacts[index];
+      setContactName(selected.name);
+      setPhone(selected.number.replace(/\s/g,""));
+
+      if(type==="birthday"){
+        setLabel(`${selected.name}'s Birthday`);
+        setMessage(`🎂 Happy Birthday ${selected.name}! Wishing you a wonderful day filled with joy! 🎉`);
+      }else if(type==="anniversary"){
+        setLabel(`${selected.name}'s Anniversary`);
+        setMessage(`💍 Happy Anniversary ${selected.name}! Wishing you many more years of love! ❤️`);
+      }else{
+        setLabel(`${selected.name} Reminder`);
+        setMessage(`🎉 Hey ${selected.name}! Just thinking of you today. Hope you have an amazing day! 😊`);
+      }
+    }catch(e){
+      console.log("Contact picker failed:",e);
+      alert("Contact access not available. Please enter the phone number manually.");
+    }
+  };
+
+  const save=()=>{
+    if(!date){alert("Please select a date");return;}
+    onSave({type,date,time,phone:phone.replace(/\s/g,""),contactName,message,label:label.trim()||"Reminder",active:true});
+  };
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:300,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+      <div style={{background:bg,borderRadius:"20px 20px 0 0",padding:24,width:"100%",maxWidth:480,maxHeight:"92vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <h3 style={{margin:0,fontSize:18,fontWeight:800,color:textColor}}>🔔 Set Reminder</h3>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:24,cursor:"pointer",color:"#9ca3af"}}>×</button>
+        </div>
+
+        <div style={{marginBottom:16}}>
+          <label style={lbl}>Type</label>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {[["once","⏰ Once"],["birthday","🎂 Birthday"],["anniversary","💍 Anniversary"],["daily","🔁 Daily"],["weekly","📅 Weekly"]].map(([v,l])=>(
+              <button key={v} onClick={()=>setType(v)} style={{padding:"7px 14px",borderRadius:20,border:"none",cursor:"pointer",background:type===v?"#4f46e5":dark?"#374151":"#f3f4f6",color:type===v?"#fff":dark?"#d1d5db":"#6b7280",fontWeight:600,fontSize:12}}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{marginBottom:16}}>
+          <label style={lbl}>Label</label>
+          <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Mom's Birthday" style={inp}/>
+        </div>
+
+        <div style={{marginBottom:16}}>
+          <label style={lbl}>{isRecurringReminder(type)?"Date — repeats every year":"Date"}</label>
+          <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={inp}/>
+          {isRecurringReminder(type)&&(
+            <div style={{fontSize:11,color:"#9ca3af",marginTop:4}}>
+              The year will not show in the card. This reminder repeats every year automatically.
+            </div>
+          )}
+        </div>
+
+        <div style={{marginBottom:16}}>
+          <label style={lbl}>Reminder Time</label>
+          <input type="time" value={time} onChange={e=>setTime(e.target.value)} style={inp}/>
+          <div style={{fontSize:11,color:"#9ca3af",marginTop:4}}>
+            {isRecurringReminder(type)?"⭐ Default 11:58 PM — so you can wish at midnight!":"Set when you want to be notified"}
+          </div>
+        </div>
+
+        <div style={{marginBottom:16}}>
+          <label style={lbl}>📱 WhatsApp Contact</label>
+          <button onClick={pickContact} style={{width:"100%",background:"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",border:"none",borderRadius:10,padding:"11px",fontWeight:700,fontSize:14,cursor:"pointer",marginBottom:10}}>
+            👤 Pick from Contacts
+          </button>
+          {contactName&&<div style={{fontSize:13,fontWeight:600,color:"#10b981",marginBottom:8}}>✅ {contactName} selected</div>}
+          <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+1 604 123 4567 (or enter manually)" style={inp}/>
+        </div>
+
+        {phone&&(
+          <div style={{marginBottom:20}}>
+            <label style={lbl}>WhatsApp Message</label>
+            <textarea value={message} onChange={e=>setMessage(e.target.value)} rows={3} style={{...inp,resize:"vertical"}}/>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+              {[
+                ["🎂 Birthday",`🎂 Happy Birthday ${contactName||""}! Wishing you a wonderful day filled with joy! 🎉`],
+                ["💍 Anniversary",`💍 Happy Anniversary ${contactName||""}! Wishing you many more years of love! ❤️`],
+                ["🎉 General",`🎉 Hey ${contactName||""}! Just thinking of you today. Hope you have an amazing day! 😊`],
+                ["🙏 Formal",`Dear ${contactName||""},\n\nWishing you a very Happy Birthday! May this year bring you joy and success.\n\nWarm regards`],
+              ].map(([l,m])=>(
+                <button key={l} onClick={()=>setMessage(m)} style={{padding:"4px 10px",borderRadius:12,border:"none",cursor:"pointer",background:dark?"#374151":"#f3f4f6",color:dark?"#d1d5db":"#374151",fontSize:11,fontWeight:600}}>{l}</button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <button onClick={save} style={{width:"100%",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",border:"none",borderRadius:12,padding:14,fontWeight:800,fontSize:16,cursor:"pointer"}}>
+          🔔 Save Reminder
+        </button>
+      </div>
+    </div>
+  );
+}){
   const [type,setType]=useState(note.reminder?.type||"once");
   const [date,setDate]=useState(note.reminder?.date||"");
   const [time,setTime]=useState(note.reminder?.time||"23:58"); // default 11:58 PM
@@ -210,6 +460,47 @@ function ReminderModal({note,onSave,onClose,dark}){
 
 // ── Reminder Card ─────────────────────────────────────────────────────────────
 function ReminderCard({note,onEdit,onDismiss,dark}){
+  const r=note.reminder;
+  const emoji=r.type==="birthday"?"🎂":r.type==="anniversary"?"💍":r.type==="daily"?"🔁":r.type==="weekly"?"📅":"🔔";
+  const card=dark?"#1f2937":"#fff";
+  const textColor=dark?"#f9fafb":"#111";
+  const subText=dark?"#9ca3af":"#6b7280";
+
+  const openWhatsApp=()=>{
+    const clean=r.phone.replace(/[^0-9+]/g,"");
+    window.open(`https://wa.me/${clean}?text=${encodeURIComponent(r.message)}`,"_blank");
+  };
+
+  const dateText=formatReminderDate(r.date,r.type);
+  const daysText=getDaysUntilText(r.date,r.time,r.type);
+
+  return(
+    <div style={{background:card,borderRadius:16,marginBottom:10,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,0.08)",border:`2px solid ${dark?"#4b5563":"#e9d5ff"}`}}>
+      <div style={{padding:"12px 14px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:40,height:40,borderRadius:12,background:"#ede9fe",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{emoji}</div>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:14,color:textColor}}>{r.label}</div>
+            <div style={{fontSize:12,color:subText}}>
+              📅 {dateText} at {r.time}
+              {daysText&&<span style={{fontWeight:700,color:"#7c3aed"}}> · {daysText}</span>}
+              {isRecurringReminder(r.type)&&<span style={{fontWeight:700,color:"#10b981"}}> · yearly</span>}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>onEdit(note)} style={{background:dark?"#374151":"#f3f4f6",border:"none",borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:13}}>✏️</button>
+            <button onClick={()=>onDismiss(note.id)} style={{background:dark?"#374151":"#f3f4f6",border:"none",borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:13,color:"#10b981",fontWeight:700}}>✓</button>
+          </div>
+        </div>
+      </div>
+      {r.phone&&(
+        <button onClick={openWhatsApp} style={{width:"100%",background:"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",border:"none",padding:"10px",fontWeight:700,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+          💬 Send WhatsApp to {r.contactName||r.phone}
+        </button>
+      )}
+    </div>
+  );
+}){
   const r=note.reminder;
   const emoji=r.type==="birthday"?"🎂":r.type==="anniversary"?"💍":r.type==="daily"?"🔁":r.type==="weekly"?"📅":"🔔";
   const card=dark?"#1f2937":"#fff";
@@ -357,8 +648,8 @@ function NoteEditor({note,onSave,onClose,allNotes,dark}){
     <div style={{position:"fixed",inset:0,background:bg,zIndex:100,display:"flex",flexDirection:"column"}}>
      {showReminder&&<ReminderModal
   note={{title,reminder}}
-  onSave={r=>{
-    const savedNote = {
+  onSave={async r=>{
+    const savedNote={
       id: note?.id || Date.now(),
       title: title.trim() || r.label || "Reminder",
       content,
@@ -370,6 +661,7 @@ function NoteEditor({note,onSave,onClose,allNotes,dark}){
       reminder: r
     };
 
+    await scheduleNativeReminder(savedNote);
     onSave(savedNote);
   }}
   onClose={()=>setShowReminder(false)}
@@ -383,7 +675,7 @@ function NoteEditor({note,onSave,onClose,allNotes,dark}){
       </div>
       {reminder&&(
         <div style={{background:"#ede9fe",padding:"8px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <span style={{fontSize:12,color:"#5b21b6",fontWeight:600}}>🔔 {reminder.label} · {reminder.date} at {reminder.time}</span>
+          <span style={{fontSize:12,color:"#5b21b6",fontWeight:600}}>🔔 {reminder.label} · {formatReminderDate(reminder.date,reminder.type)} at {reminder.time}</span>
           <button onClick={()=>setReminder(null)} style={{background:"none",border:"none",color:"#9ca3af",cursor:"pointer",fontSize:16}}>×</button>
         </div>
       )}
@@ -465,6 +757,24 @@ export default function QuickNotes(){
   useEffect(()=>{localStorage.setItem(NOTES_KEY,JSON.stringify(notes));},[notes]);
   useEffect(()=>{localStorage.setItem(DARK_KEY,dark);},[dark]);
 
+  useEffect(()=>{
+    const setupNotificationTap=async()=>{
+      try{
+        await LocalNotifications.addListener("localNotificationActionPerformed",event=>{
+          const extra=event.notification?.extra;
+          if(extra?.phone&&extra?.message){
+            const clean=String(extra.phone).replace(/[^0-9+]/g,"");
+            window.open(`https://wa.me/${clean}?text=${encodeURIComponent(extra.message)}`,"_blank");
+          }
+        });
+      }catch(e){
+        console.log("Notification tap listener unavailable:",e);
+      }
+    };
+
+    setupNotificationTap();
+  },[]);
+
   // Schedule notifications
   useEffect(()=>{
     if("Notification"in window&&Notification.permission==="default")Notification.requestPermission();
@@ -526,7 +836,14 @@ export default function QuickNotes(){
   const toggleItem=(nId,iId)=>setNotes(p=>p.map(n=>n.id===nId?{...n,items:n.items.map(i=>i.id===iId?{...i,done:!i.done}:i)}:n));
   const togglePin=id=>setNotes(p=>p.map(n=>n.id===id?{...n,pinned:!n.pinned}:n));
   const deleteNote=id=>setNotes(p=>p.filter(n=>n.id!==id));
-  const dismissReminder=id=>setNotes(p=>p.map(n=>n.id===id?{...n,reminder:{...n.reminder,active:false}}:n));
+  const dismissReminder=async id=>{
+    try{
+      await LocalNotifications.cancel({notifications:[{id:getNotificationId(id)}]});
+    }catch(e){
+      console.log("Cancel notification failed:",e);
+    }
+    setNotes(p=>p.map(n=>n.id===id?{...n,reminder:{...n.reminder,active:false}}:n));
+  };
   const saveNote=note=>{setNotes(p=>p.find(n=>n.id===note.id)?p.map(n=>n.id===note.id?note:n):[note,...p]);setEditing(null);};
 
   const activeReminders=notes.filter(n=>n.reminder?.active);
@@ -584,7 +901,7 @@ export default function QuickNotes(){
   ➕ Create New Reminder
 </button>
             <div style={{fontSize:12,color:subText,marginBottom:12,textAlign:"center"}}>
-              After creating a note, tap ✏️ edit → then tap 🔔 to set date, time & WhatsApp message
+              Birthdays and anniversaries repeat yearly. Notifications work in the Android APK after permission is allowed.
             </div>
             {reminderCount===0
               ?<div style={{textAlign:"center",padding:"20px 0",color:subText}}>
@@ -678,7 +995,7 @@ export default function QuickNotes(){
         <div style={{position:"fixed",bottom:132,right:20,zIndex:89,display:"flex",flexDirection:"column",gap:10,alignItems:"flex-end"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>📝 New Note</span>
-            <button onClick={()=>{setFabOpen(false);setEditing({type:"copy"});setIsNew(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(79,70,229,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>📝</button>
+            <button onClick={()=>{setFabOpen(false);setEditing({type:"copy"});setIsNew(false);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(79,70,229,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>📝</button>
           </div>
          <div style={{display:"flex",alignItems:"center",gap:10}}>
   <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>☑️ New Checklist</span>
