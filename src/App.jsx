@@ -347,7 +347,7 @@ function NoteEditor({note,onSave,onClose,allNotes,dark}){
   const [category,setCategory]=useState(note?.category||"Personal");
   const [items,setItems]=useState(note?.items||[]);
   const [newItem,setNewItem]=useState("");
-  const [showReminder,setShowReminder]=useState(false);
+  const [showReminder,setShowReminder]=useState(note?._openReminder||false);
   const [reminder,setReminder]=useState(note?.reminder||null);
   useEffect(()=>{if(!note?.id)setTitle(getDefaultTitle(allNotes,type));},[type]);
   const addItem=()=>{if(!newItem.trim())return;setItems(p=>[...p,{id:Date.now(),text:newItem.trim(),done:false}]);setNewItem("");};
@@ -436,6 +436,7 @@ export default function QuickNotes(){
   const [globalCopy,setGlobalCopy] =useState(true);
   const [importNote,setImportNote] =useState(null);
   const [showReminderPanel,setShowReminderPanel]=useState(false);
+  const [fabOpen,setFabOpen]=useState(false);
 
   useEffect(()=>{
     const p=new URLSearchParams(window.location.search);
@@ -534,8 +535,20 @@ export default function QuickNotes(){
               <h3 style={{margin:0,fontSize:18,fontWeight:800,color:dark?"#f9fafb":"#111"}}>🔔 All Reminders ({reminderCount})</h3>
               <button onClick={()=>setShowReminderPanel(false)} style={{background:"none",border:"none",fontSize:24,cursor:"pointer",color:"#9ca3af"}}>×</button>
             </div>
+            {/* Add new reminder button always visible */}
+            <button onClick={()=>{setShowReminderPanel(false);setEditing({type:"copy"});setIsNew(true);}}
+              style={{width:"100%",background:"linear-gradient(135deg,#f59e0b,#ef4444)",color:"#fff",border:"none",borderRadius:12,padding:"12px",fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              ➕ Create New Reminder
+            </button>
+            <div style={{fontSize:12,color:subText,marginBottom:12,textAlign:"center"}}>
+              After creating a note, tap ✏️ edit → then tap 🔔 to set date, time & WhatsApp message
+            </div>
             {reminderCount===0
-              ?<div style={{textAlign:"center",padding:"30px 0",color:subText}}><div style={{fontSize:40,marginBottom:8}}>🔔</div><div>No active reminders</div></div>
+              ?<div style={{textAlign:"center",padding:"20px 0",color:subText}}>
+                  <div style={{fontSize:40,marginBottom:8}}>🔔</div>
+                  <div style={{fontWeight:600}}>No reminders yet</div>
+                  <div style={{fontSize:13,marginTop:4}}>Tap "Create New Reminder" above to get started</div>
+                </div>
               :activeReminders.map(note=><ReminderCard key={note.id} note={note} onEdit={n=>{setShowReminderPanel(false);setEditing(n);setIsNew(false);}} onDismiss={dismissReminder} dark={dark}/>)
             }
           </div>
@@ -550,8 +563,10 @@ export default function QuickNotes(){
             <p style={{color:"#a5b4fc",margin:0,fontSize:12}}>{notes.length} notes · {reminderCount} reminders</p>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <button onClick={()=>setShowReminderPanel(true)} style={{position:"relative",background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:38,height:38,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>
-              🔔{reminderCount>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#ef4444",color:"#fff",borderRadius:"50%",width:18,height:18,fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{reminderCount}</span>}
+            <button onClick={()=>setShowReminderPanel(true)} style={{position:"relative",background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,padding:"0 10px",height:38,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:5,color:"#fff",fontWeight:700}}>
+              <span style={{fontSize:16}}>🔔</span>
+              <span>Reminders</span>
+              {reminderCount>0&&<span style={{background:"#ef4444",color:"#fff",borderRadius:20,padding:"1px 6px",fontSize:11,fontWeight:800}}>{reminderCount}</span>}
             </button>
             <button onClick={()=>setDark(p=>!p)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:38,height:38,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{dark?"☀️":"🌙"}</button>
             <div style={{display:"flex",alignItems:"center",gap:5}}>
@@ -612,8 +627,28 @@ export default function QuickNotes(){
       {/* Ad Banner — non-intrusive at bottom */}
       <AdBanner dark={dark}/>
 
-      {/* FAB */}
-      <button onClick={()=>{setEditing({});setIsNew(true);}} style={{position:"fixed",bottom:64,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontSize:28,cursor:"pointer",boxShadow:"0 4px 20px rgba(79,70,229,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+      {/* FAB Menu */}
+      {fabOpen&&(
+        <div style={{position:"fixed",inset:0,zIndex:88}} onClick={()=>setFabOpen(false)}/>
+      )}
+      {fabOpen&&(
+        <div style={{position:"fixed",bottom:132,right:20,zIndex:89,display:"flex",flexDirection:"column",gap:10,alignItems:"flex-end"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>📝 New Note</span>
+            <button onClick={()=>{setFabOpen(false);setEditing({type:"copy"});setIsNew(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(79,70,229,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>📝</button>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>☑️ New Checklist</span>
+            <button onClick={()=>{setFabOpen(false);setEditing({type:"checklist"});setIsNew(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#059669,#10b981)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(5,150,105,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>☑️</button>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>🔔 Reminders & Events</span>
+            <button onClick={()=>{setFabOpen(false);setShowReminderPanel(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#f59e0b,#ef4444)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(245,158,11,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>🔔</button>
+          </div>
+        </div>
+      )}
+      {/* FAB main button */}
+      <button onClick={()=>setFabOpen(p=>!p)} style={{position:"fixed",bottom:64,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontSize:28,cursor:"pointer",boxShadow:"0 4px 20px rgba(79,70,229,0.5)",display:"flex",alignItems:"center",justifyContent:"center",transition:"transform 0.2s",transform:fabOpen?"rotate(45deg)":"rotate(0deg)",zIndex:90}}>+</button>
 
       {toast&&<Toast msg={toast} onDone={()=>setToast(null)}/>}
     </div>
