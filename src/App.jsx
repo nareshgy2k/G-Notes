@@ -536,10 +536,34 @@ export default function QuickNotes(){
               <button onClick={()=>setShowReminderPanel(false)} style={{background:"none",border:"none",fontSize:24,cursor:"pointer",color:"#9ca3af"}}>×</button>
             </div>
             {/* Add new reminder button always visible */}
-            <button onClick={()=>{setShowReminderPanel(false);setEditing({type:"copy"});setIsNew(true);}}
-              style={{width:"100%",background:"linear-gradient(135deg,#f59e0b,#ef4444)",color:"#fff",border:"none",borderRadius:12,padding:"12px",fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              ➕ Create New Reminder
-            </button>
+           <button
+  onClick={()=>{
+    setShowReminderPanel(false);
+    setEditing({
+      type:"copy",
+      _openReminder:true
+    });
+    setIsNew(false);
+  }}
+  style={{
+    width:"100%",
+    background:"linear-gradient(135deg,#f59e0b,#ef4444)",
+    color:"#fff",
+    border:"none",
+    borderRadius:12,
+    padding:"12px",
+    fontWeight:700,
+    fontSize:15,
+    cursor:"pointer",
+    marginBottom:16,
+    display:"flex",
+    alignItems:"center",
+    justifyContent:"center",
+    gap:8
+  }}
+>
+  ➕ Create New Reminder
+</button>
             <div style={{fontSize:12,color:subText,marginBottom:12,textAlign:"center"}}>
               After creating a note, tap ✏️ edit → then tap 🔔 to set date, time & WhatsApp message
             </div>
@@ -637,10 +661,34 @@ export default function QuickNotes(){
             <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>📝 New Note</span>
             <button onClick={()=>{setFabOpen(false);setEditing({type:"copy"});setIsNew(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(79,70,229,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>📝</button>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>☑️ New Checklist</span>
-            <button onClick={()=>{setFabOpen(false);setEditing({type:"checklist"});setIsNew(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#059669,#10b981)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(5,150,105,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>☑️</button>
-          </div>
+         <div style={{display:"flex",alignItems:"center",gap:10}}>
+  <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>☑️ New Checklist</span>
+  <button
+    onClick={()=>{
+      setFabOpen(false);
+      setEditing({
+        type:"checklist"
+      });
+      setIsNew(false);
+    }}
+    style={{
+      width:48,
+      height:48,
+      borderRadius:"50%",
+      border:"none",
+      background:"linear-gradient(135deg,#059669,#10b981)",
+      color:"#fff",
+      fontSize:22,
+      cursor:"pointer",
+      boxShadow:"0 4px 14px rgba(5,150,105,0.5)",
+      display:"flex",
+      alignItems:"center",
+      justifyContent:"center"
+    }}
+  >
+    ☑️
+  </button>
+</div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>🔔 Reminders & Events</span>
             <button onClick={()=>{setFabOpen(false);setShowReminderPanel(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#f59e0b,#ef4444)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(245,158,11,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>🔔</button>
