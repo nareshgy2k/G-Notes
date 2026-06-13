@@ -355,7 +355,26 @@ function NoteEditor({note,onSave,onClose,allNotes,dark}){
   const bg=dark?"#111827":"#fff";const textColor=dark?"#f9fafb":"#111";const borderCol=dark?"#374151":"#e5e7eb";const subText=dark?"#9ca3af":"#6b7280";
   return(
     <div style={{position:"fixed",inset:0,background:bg,zIndex:100,display:"flex",flexDirection:"column"}}>
-      {showReminder&&<ReminderModal note={{title,reminder}} onSave={r=>{setReminder(r);setShowReminder(false);}} onClose={()=>setShowReminder(false)} dark={dark}/>}
+     {showReminder&&<ReminderModal
+  note={{title,reminder}}
+  onSave={r=>{
+    const savedNote = {
+      id: note?.id || Date.now(),
+      title: title.trim() || r.label || "Reminder",
+      content,
+      type,
+      category,
+      items,
+      pinned: note?.pinned || false,
+      created: note?.created || Date.now(),
+      reminder: r
+    };
+
+    onSave(savedNote);
+  }}
+  onClose={()=>setShowReminder(false)}
+  dark={dark}
+/>}
       <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:`1px solid ${borderCol}`}}>
         <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:subText}}>←</button>
         <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Note title..." style={{flex:1,border:"none",outline:"none",fontSize:17,fontWeight:700,color:textColor,fontFamily:"inherit",background:"transparent"}}/>
