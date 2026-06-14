@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
 const PIN_KEY     = "qnotes_pin";
 const NOTES_KEY   = "qnotes_data";
 const DARK_KEY    = "qnotes_dark";
+const LOCK_KEY    = "qnotes_lock";
 const DEFAULT_PIN = "1234";
 const CATEGORIES  = ["All","Personal","Shopping","Work","Templates"];
 const CAT_COLORS  = {
@@ -19,7 +19,6 @@ const SAMPLE_NOTES = [
   {id:3,title:"Work Email Sign-off",category:"Work",content:"Best regards,\nYour Name\nyour@email.com",type:"copy",pinned:false,created:Date.now()-7200000,items:[],reminder:null},
 ];
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 const getDefaultTitle=(notes,type)=>{
   const base=type==="checklist"?"My Checklist":"My Note";
   const ex=notes.map(n=>n.title);
@@ -29,24 +28,43 @@ const getDefaultTitle=(notes,type)=>{
 const encodeNote=note=>{try{return btoa(unescape(encodeURIComponent(JSON.stringify({title:note.title,content:note.content,type:note.type,category:note.category,items:note.items.map(i=>({id:i.id,text:i.text,done:false}))}))));}catch{return null;}};
 const decodeNote=str=>{try{return JSON.parse(decodeURIComponent(escape(atob(str))));}catch{return null;}};
 
+// ── Days until (FIXED — always shows future days) ─────────────────────────────
+const daysUntilDate=(dateStr,type)=>{
+  if(!dateStr)return null;
+  const now=new Date();
+  now.setHours(0,0,0,0);
+  const target=new Date(dateStr);
+  // For birthday/anniversary always roll to next occurrence
+  if(type==="birthday"||type==="anniversary"){
+    target.setFullYear(now.getFullYear());
+    if(target<=now) target.setFullYear(now.getFullYear()+1);
+  }
+  const diff=Math.ceil((target-now)/(1000*60*60*24));
+  if(diff===0)return"🎉 Today!";
+  if(diff===1)return"Tomorrow!";
+  return`In ${diff} days`;
+};
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 function Toast({msg,onDone}){
   useEffect(()=>{const t=setTimeout(onDone,2500);return()=>clearTimeout(t);},[]);
-  return <div style={{position:"fixed",bottom:88,left:"50%",transform:"translateX(-50%)",background:"#1a1a2e",color:"#fff",padding:"10px 20px",borderRadius:24,fontSize:13,fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:8,whiteSpace:"nowrap"}}>✅ {msg}</div>;
+  return<div style={{position:"fixed",bottom:88,left:"50%",transform:"translateX(-50%)",background:"#1a1a2e",color:"#fff",padding:"10px 20px",borderRadius:24,fontSize:13,fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:8,whiteSpace:"nowrap"}}>✅ {msg}</div>;
 }
 
-// ── Ad Banner (bottom — non-intrusive) ────────────────────────────────────────
+// ── Ad Banner ─────────────────────────────────────────────────────────────────
 function AdBanner({dark}){
-  // Replace data-ad-slot with your real AdSense/AdMob slot ID
-  // For PWA: Google AdSense  |  For APK: swap with AdMob banner via Capacitor
   return(
-    <div style={{position:"fixed",bottom:0,left:0,right:0,height:56,background:dark?"#1f2937":"#f8fafc",borderTop:`1px solid ${dark?"#374151":"#e5e7eb"}`,display:"flex",alignItems:"center",justifyContent:"center",zIndex:40}}>
-      <div style={{fontSize:11,color:dark?"#6b7280":"#9ca3af",fontStyle:"italic",letterSpacing:0.5}}>
-        📢 Advertisement — tap to support QuickNotes
-      </div>
-      {/* Uncomment below and add your AdSense publisher ID to go live:
-      <ins className="adsbygoogle" style={{display:"block"}} data-ad-client="ca-pub-XXXXXXXXXXXXXXXX" data-ad-slot="XXXXXXXXXX" data-ad-format="auto" data-full-width-responsive="true"/>
-      */}
+    <div style={{position:"fixed",bottom:0,left:0,right:0,height:52,background:dark?"#1f2937":"#f8fafc",borderTop:`1px solid ${dark?"#374151":"#e5e7eb"}`,display:"flex",alignItems:"center",justifyContent:"center",zIndex:40}}>
+      <div style={{fontSize:11,color:dark?"#6b7280":"#9ca3af",fontStyle:"italic"}}>📢 Advertisement — tap to support QuickNotes</div>
+    </div>
+  );
+}
+
+// ── Toggle component ──────────────────────────────────────────────────────────
+function Toggle({value,onChange}){
+  return(
+    <div onClick={()=>onChange(!value)} style={{width:44,height:24,borderRadius:12,cursor:"pointer",position:"relative",background:value?"#4f46e5":"#9ca3af",transition:"background 0.2s",flexShrink:0}}>
+      <div style={{position:"absolute",top:3,left:value?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}}/>
     </div>
   );
 }
@@ -90,11 +108,147 @@ function PinScreen({onUnlock,isSetup}){
   );
 }
 
+// ── Settings Screen ───────────────────────────────────────────────────────────
+function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalCopy,setGlobalCopy,notes,setNotes}){
+  const [changingPin,setChangingPin]=useState(false);
+  const [newPin,setNewPin]=useState("");
+  const [confirmPin,setConfirmPin]=useState("");
+  const [pinStep,setPinStep]=useState(1);
+  const [pinError,setPinError]=useState("");
+  const bg=dark?"#111827":"#f5f3ff";
+  const card=dark?"#1f2937":"#fff";
+  const textColor=dark?"#f9fafb":"#111";
+  const subText=dark?"#9ca3af":"#6b7280";
+  const border=dark?"#374151":"#e5e7eb";
+
+  const handlePinDigit=(digit,step)=>{
+    if(step===1){
+      const val=newPin+digit;
+      setNewPin(val);
+      if(val.length===4){setPinStep(2);setPinError("");}
+    } else {
+      const val=confirmPin+digit;
+      setConfirmPin(val);
+      if(val.length===4){
+        if(val===newPin){localStorage.setItem(PIN_KEY,val);setChangingPin(false);setNewPin("");setConfirmPin("");setPinStep(1);setPinError("✅ PIN changed successfully!");}
+        else{setPinError("PINs don't match. Try again.");setConfirmPin("");setPinStep(1);setNewPin("");}
+      }
+    }
+  };
+
+  const row=(icon,label,sub,right)=>(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 0",borderBottom:`1px solid ${border}`}}>
+      <div style={{display:"flex",alignItems:"center",gap:12}}>
+        <span style={{fontSize:22}}>{icon}</span>
+        <div>
+          <div style={{fontWeight:600,fontSize:14,color:textColor}}>{label}</div>
+          {sub&&<div style={{fontSize:12,color:subText,marginTop:2}}>{sub}</div>}
+        </div>
+      </div>
+      {right}
+    </div>
+  );
+
+  return(
+    <div style={{position:"fixed",inset:0,background:bg,zIndex:100,display:"flex",flexDirection:"column"}}>
+      <div style={{background:"linear-gradient(135deg,#1e1b4b,#4f46e5)",padding:"20px 16px 16px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#fff"}}>←</button>
+          <h2 style={{color:"#fff",margin:0,fontSize:20,fontWeight:800}}>⚙️ Settings</h2>
+        </div>
+      </div>
+
+      <div style={{flex:1,overflow:"auto",padding:"0 16px 40px"}}>
+
+        {/* Appearance */}
+        <div style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1,padding:"16px 0 8px"}}>Appearance</div>
+        {row("🌙","Dark Mode","Switch between light and dark theme",<Toggle value={dark} onChange={setDark}/>)}
+
+        {/* Notes */}
+        <div style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1,padding:"16px 0 8px"}}>Notes</div>
+        {row("📋","Copy Mode","Show copy button on all note cards by default",<Toggle value={globalCopy} onChange={setGlobalCopy}/>)}
+
+        {/* Security */}
+        <div style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1,padding:"16px 0 8px"}}>Security</div>
+        {row("🔐","PIN Lock","Require PIN when opening the app",<Toggle value={lockEnabled} onChange={v=>{setLockEnabled(v);localStorage.setItem(LOCK_KEY,v);}}/>)}
+
+        {lockEnabled&&(
+          <div style={{background:card,borderRadius:12,padding:14,marginTop:8}}>
+            {!changingPin?(
+              <button onClick={()=>setChangingPin(true)} style={{width:"100%",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",border:"none",borderRadius:10,padding:12,fontWeight:700,fontSize:14,cursor:"pointer"}}>
+                🔑 Change PIN
+              </button>
+            ):(
+              <div>
+                <div style={{fontWeight:700,color:textColor,marginBottom:12,textAlign:"center"}}>
+                  {pinStep===1?"Enter new 4-digit PIN":"Confirm new PIN"}
+                </div>
+                <div style={{display:"flex",gap:10,justifyContent:"center",marginBottom:16}}>
+                  {[0,1,2,3].map(i=>(
+                    <div key={i} style={{width:14,height:14,borderRadius:"50%",background:(pinStep===1?newPin:confirmPin).length>i?"#4f46e5":"transparent",border:"2px solid #4f46e5"}}/>
+                  ))}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,maxWidth:240,margin:"0 auto"}}>
+                  {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((k,i)=>(
+                    <button key={i} onClick={()=>{
+                      if(k==="⌫"){if(pinStep===1)setNewPin(p=>p.slice(0,-1));else setConfirmPin(p=>p.slice(0,-1));}
+                      else if(k!=="")handlePinDigit(String(k),pinStep);
+                    }} disabled={k===""}
+                      style={{height:44,borderRadius:10,border:"none",background:k===""?"transparent":dark?"#374151":"#f3f4f6",color:textColor,fontSize:18,fontWeight:600,cursor:k===""?"default":"pointer"}}>
+                      {k}
+                    </button>
+                  ))}
+                </div>
+                {pinError&&<div style={{textAlign:"center",marginTop:10,fontSize:13,color:pinError.startsWith("✅")?"#10b981":"#ef4444",fontWeight:600}}>{pinError}</div>}
+                <button onClick={()=>{setChangingPin(false);setNewPin("");setConfirmPin("");setPinStep(1);setPinError("");}} style={{width:"100%",background:dark?"#374151":"#f3f4f6",color:subText,border:"none",borderRadius:10,padding:10,fontWeight:600,fontSize:13,cursor:"pointer",marginTop:12}}>Cancel</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Reminders */}
+        <div style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1,padding:"16px 0 8px"}}>Reminders</div>
+        <div style={{background:card,borderRadius:12,padding:14}}>
+          <div style={{fontSize:13,color:textColor,fontWeight:600,marginBottom:4}}>🔔 Default reminder time</div>
+          <div style={{fontSize:12,color:subText,marginBottom:8}}>Birthday & Anniversary reminders fire at 11:58 PM by default so you can wish at midnight</div>
+          <div style={{background:dark?"#374151":"#f3f4f6",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#4f46e5",fontWeight:600}}>⭐ 11:58 PM (fixed for birthdays)</div>
+        </div>
+
+        {/* Data */}
+        <div style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1,padding:"16px 0 8px"}}>Data</div>
+        <div style={{background:card,borderRadius:12,padding:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:13,color:textColor,fontWeight:600}}>📊 Total notes</span>
+            <span style={{fontSize:13,color:"#4f46e5",fontWeight:700}}>{notes.length}</span>
+          </div>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}>
+            <span style={{fontSize:13,color:textColor,fontWeight:600}}>🔔 Active reminders</span>
+            <span style={{fontSize:13,color:"#4f46e5",fontWeight:700}}>{notes.filter(n=>n.reminder?.active).length}</span>
+          </div>
+          <button onClick={()=>{if(window.confirm("Delete ALL notes? This cannot be undone.")){setNotes([]);localStorage.removeItem(NOTES_KEY);}}}
+            style={{width:"100%",background:"#fff1f2",color:"#ef4444",border:"2px solid #fca5a5",borderRadius:10,padding:10,fontWeight:700,fontSize:13,cursor:"pointer"}}>
+            🗑️ Clear All Notes
+          </button>
+        </div>
+
+        {/* About */}
+        <div style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1,padding:"16px 0 8px"}}>About</div>
+        <div style={{background:card,borderRadius:12,padding:14,textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:6}}>📋</div>
+          <div style={{fontWeight:800,fontSize:16,color:textColor}}>QuickNotes</div>
+          <div style={{fontSize:12,color:subText,marginTop:4}}>Version 1.0 · Built with ❤️</div>
+          <div style={{fontSize:12,color:subText,marginTop:2}}>One-tap copy · Checklists · Reminders · WhatsApp</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Reminder Modal ────────────────────────────────────────────────────────────
 function ReminderModal({note,onSave,onClose,dark}){
   const [type,setType]=useState(note.reminder?.type||"once");
   const [date,setDate]=useState(note.reminder?.date||"");
-  const [time,setTime]=useState(note.reminder?.time||"23:58"); // default 11:58 PM
+  const [time,setTime]=useState(note.reminder?.time||"23:58");
   const [phone,setPhone]=useState(note.reminder?.phone||"");
   const [contactName,setContactName]=useState(note.reminder?.contactName||"");
   const [message,setMessage]=useState(note.reminder?.message||`🎉 ${note.title||"Reminder"}!\n\nJust thinking of you today 😊`);
@@ -106,23 +260,26 @@ function ReminderModal({note,onSave,onClose,dark}){
   const subText=dark?"#9ca3af":"#6b7280";
   const lbl={display:"block",fontSize:12,fontWeight:700,color:subText,marginBottom:8,textTransform:"uppercase"};
 
-  // Pick contact from phone book (works in APK/native, gracefully fails on PWA)
+  // Auto set time to 23:58 for birthdays/anniversaries
+  useEffect(()=>{
+    if(type==="birthday"||type==="anniversary") setTime("23:58");
+  },[type]);
+
   const pickContact=async()=>{
     if("contacts"in navigator&&"ContactsManager"in window){
       try{
         const contacts=await navigator.contacts.select(["name","tel"],{multiple:false});
         if(contacts.length>0){
           setContactName(contacts[0].name?.[0]||"");
-          const tel=contacts[0].tel?.[0]||"";
-          setPhone(tel.replace(/\s/g,""));
+          setPhone((contacts[0].tel?.[0]||"").replace(/\s/g,""));
           setLabel(`${contacts[0].name?.[0]||""}'s ${type==="birthday"?"Birthday":"Anniversary"}`);
           setMessage(type==="birthday"
             ?`🎂 Happy Birthday ${contacts[0].name?.[0]||""}! Wishing you a wonderful day! 🎉`
             :`💍 Happy Anniversary ${contacts[0].name?.[0]||""}! Wishing you many more years of love! ❤️`);
         }
-      }catch(e){alert("Contact access not available. Please enter number manually.");}
+      }catch{alert("Contact access not available. Please enter number manually.");}
     }else{
-      alert("Contact picker not supported on this browser.\nInstall the APK version for contact access, or enter the number manually below.");
+      alert("Contact picker works in the APK version.\nPlease enter the number manually below.");
     }
   };
 
@@ -139,7 +296,6 @@ function ReminderModal({note,onSave,onClose,dark}){
           <button onClick={onClose} style={{background:"none",border:"none",fontSize:24,cursor:"pointer",color:"#9ca3af"}}>×</button>
         </div>
 
-        {/* Type */}
         <div style={{marginBottom:16}}>
           <label style={lbl}>Type</label>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -149,32 +305,31 @@ function ReminderModal({note,onSave,onClose,dark}){
           </div>
         </div>
 
-        {/* Label */}
         <div style={{marginBottom:16}}>
           <label style={lbl}>Label</label>
           <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. Mom's Birthday" style={inp}/>
         </div>
 
-        {/* Date */}
         <div style={{marginBottom:16}}>
-          <label style={lbl}>{type==="birthday"||type==="anniversary"?"Date (day & month)":"Date"}</label>
+          <label style={lbl}>Date</label>
           <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={inp}/>
+          {(type==="birthday"||type==="anniversary")&&(
+            <div style={{fontSize:11,color:"#7c3aed",marginTop:4,fontWeight:600}}>
+              ⭐ For birthdays/anniversaries the year doesn't matter — reminder repeats every year automatically
+            </div>
+          )}
         </div>
 
-        {/* Time — default 11:58 PM for birthdays */}
         <div style={{marginBottom:16}}>
           <label style={lbl}>Reminder Time</label>
           <input type="time" value={time} onChange={e=>setTime(e.target.value)} style={inp}/>
           <div style={{fontSize:11,color:"#9ca3af",marginTop:4}}>
-            {type==="birthday"||type==="anniversary"
-              ? "⭐ Default 11:58 PM — so you can wish at midnight!"
-              : "Set when you want to be notified"}
+            {type==="birthday"||type==="anniversary"?"⭐ 11:58 PM default — wish at midnight!":"Set when you want the notification"}
           </div>
         </div>
 
-        {/* Contact picker */}
         <div style={{marginBottom:16}}>
-          <label style={lbl}>📱 WhatsApp Contact</label>
+          <label style={lbl}>💬 WhatsApp Contact (optional)</label>
           <button onClick={pickContact} style={{width:"100%",background:"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",border:"none",borderRadius:10,padding:"11px",fontWeight:700,fontSize:14,cursor:"pointer",marginBottom:10}}>
             👤 Pick from Contacts
           </button>
@@ -182,14 +337,13 @@ function ReminderModal({note,onSave,onClose,dark}){
           <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+1 604 123 4567 (or enter manually)" style={inp}/>
         </div>
 
-        {/* Message */}
         {phone&&(
           <div style={{marginBottom:20}}>
             <label style={lbl}>WhatsApp Message</label>
             <textarea value={message} onChange={e=>setMessage(e.target.value)} rows={3} style={{...inp,resize:"vertical"}}/>
             <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
               {[
-                ["🎂 Birthday",`🎂 Happy Birthday ${contactName||""}! Wishing you a wonderful day filled with joy! 🎉`],
+                ["🎂 Birthday",`🎂 Happy Birthday ${contactName||""}! Wishing you a wonderful day! 🎉`],
                 ["💍 Anniversary",`💍 Happy Anniversary ${contactName||""}! Wishing you many more years of love! ❤️`],
                 ["🎉 General",`🎉 Hey ${contactName||""}! Just thinking of you today. Hope you have an amazing day! 😊`],
                 ["🙏 Formal",`Dear ${contactName||""},\n\nWishing you a very Happy Birthday! May this year bring you joy and success.\n\nWarm regards`],
@@ -215,26 +369,7 @@ function ReminderCard({note,onEdit,onDismiss,dark}){
   const card=dark?"#1f2937":"#fff";
   const textColor=dark?"#f9fafb":"#111";
   const subText=dark?"#9ca3af":"#6b7280";
-
-  const openWhatsApp=()=>{
-    const clean=r.phone.replace(/[^0-9+]/g,"");
-    window.open(`https://wa.me/${clean}?text=${encodeURIComponent(r.message)}`,"_blank");
-  };
-
-  // Calculate days until
-  const daysUntil=()=>{
-    if(!r.date)return null;
-    const now=new Date();
-    const target=new Date(r.date);
-    if(r.type==="birthday"||r.type==="anniversary"){
-      target.setFullYear(now.getFullYear());
-      if(target<now)target.setFullYear(now.getFullYear()+1);
-    }
-    const diff=Math.ceil((target-now)/(1000*60*60*24));
-    if(diff===0)return "🎉 Today!";
-    if(diff===1)return "Tomorrow!";
-    return `${diff} days away`;
-  };
+  const countdown=daysUntilDate(r.date,r.type);
 
   return(
     <div style={{background:card,borderRadius:16,marginBottom:10,overflow:"hidden",boxShadow:"0 2px 10px rgba(0,0,0,0.08)",border:`2px solid ${dark?"#4b5563":"#e9d5ff"}`}}>
@@ -243,7 +378,8 @@ function ReminderCard({note,onEdit,onDismiss,dark}){
           <div style={{width:40,height:40,borderRadius:12,background:"#ede9fe",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{emoji}</div>
           <div style={{flex:1}}>
             <div style={{fontWeight:700,fontSize:14,color:textColor}}>{r.label}</div>
-            <div style={{fontSize:12,color:subText}}>📅 {r.date} at {r.time} {daysUntil()&&<span style={{fontWeight:700,color:"#7c3aed"}}>· {daysUntil()}</span>}</div>
+            <div style={{fontSize:12,color:subText}}>📅 {r.date} at {r.time}</div>
+            {countdown&&<div style={{fontSize:12,fontWeight:700,color:"#7c3aed",marginTop:2}}>{countdown}</div>}
           </div>
           <div style={{display:"flex",gap:6}}>
             <button onClick={()=>onEdit(note)} style={{background:dark?"#374151":"#f3f4f6",border:"none",borderRadius:8,width:30,height:30,cursor:"pointer",fontSize:13}}>✏️</button>
@@ -252,7 +388,8 @@ function ReminderCard({note,onEdit,onDismiss,dark}){
         </div>
       </div>
       {r.phone&&(
-        <button onClick={openWhatsApp} style={{width:"100%",background:"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",border:"none",padding:"10px",fontWeight:700,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        <button onClick={()=>window.open(`https://wa.me/${r.phone.replace(/[^0-9+]/g,"")}?text=${encodeURIComponent(r.message)}`,"_blank")}
+          style={{width:"100%",background:"linear-gradient(135deg,#25d366,#128c7e)",color:"#fff",border:"none",padding:"10px",fontWeight:700,fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
           💬 Send WhatsApp to {r.contactName||r.phone}
         </button>
       )}
@@ -273,7 +410,7 @@ function NoteCard({note,dark,globalCopy,onEdit,onDelete,onPin,onCopy,onShare,onT
   const isLong=note.type==="copy"?note.content.length>120:totalCount>4;
 
   return(
-    <div style={{background:card,borderRadius:16,marginBottom:12,boxShadow:dark?"0 2px 10px rgba(0,0,0,0.3)":"0 2px 10px rgba(0,0,0,0.06)",border:note.pinned?"2px solid #818cf8":`2px solid ${borderCol}`,overflow:"hidden",transition:"background 0.3s"}}>
+    <div style={{background:card,borderRadius:16,marginBottom:12,boxShadow:dark?"0 2px 10px rgba(0,0,0,0.3)":"0 2px 10px rgba(0,0,0,0.06)",border:note.pinned?"2px solid #818cf8":`2px solid ${borderCol}`,overflow:"hidden"}}>
       <div style={{padding:"14px 14px 10px"}}>
         <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
           <div style={{flex:1}}>
@@ -353,32 +490,14 @@ function NoteEditor({note,onSave,onClose,allNotes,dark}){
   const addItem=()=>{if(!newItem.trim())return;setItems(p=>[...p,{id:Date.now(),text:newItem.trim(),done:false}]);setNewItem("");};
   const save=()=>onSave({id:note?.id||Date.now(),title:title.trim()||getDefaultTitle(allNotes,type),content,type,category,items,pinned:note?.pinned||false,created:note?.created||Date.now(),reminder});
   const bg=dark?"#111827":"#fff";const textColor=dark?"#f9fafb":"#111";const borderCol=dark?"#374151":"#e5e7eb";const subText=dark?"#9ca3af":"#6b7280";
+
   return(
     <div style={{position:"fixed",inset:0,background:bg,zIndex:100,display:"flex",flexDirection:"column"}}>
-     {showReminder&&<ReminderModal
-  note={{title,reminder}}
-  onSave={r=>{
-    const savedNote = {
-      id: note?.id || Date.now(),
-      title: title.trim() || r.label || "Reminder",
-      content,
-      type,
-      category,
-      items,
-      pinned: note?.pinned || false,
-      created: note?.created || Date.now(),
-      reminder: r
-    };
-
-    onSave(savedNote);
-  }}
-  onClose={()=>setShowReminder(false)}
-  dark={dark}
-/>}
+      {showReminder&&<ReminderModal note={{title,reminder}} onSave={r=>{setReminder(r);setShowReminder(false);}} onClose={()=>setShowReminder(false)} dark={dark}/>}
       <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:`1px solid ${borderCol}`}}>
         <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:subText}}>←</button>
         <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="Note title..." style={{flex:1,border:"none",outline:"none",fontSize:17,fontWeight:700,color:textColor,fontFamily:"inherit",background:"transparent"}}/>
-        <button onClick={()=>setShowReminder(true)} style={{background:reminder?"#4f46e5":dark?"#374151":"#f3f4f6",border:"none",borderRadius:8,width:34,height:34,cursor:"pointer",fontSize:16}}>🔔</button>
+        <button onClick={()=>setShowReminder(true)} style={{background:reminder?"#4f46e5":dark?"#374151":"#f3f4f6",border:"none",borderRadius:8,width:34,height:34,cursor:"pointer",fontSize:16}} title="Set Reminder">🔔</button>
         <button onClick={save} style={{background:"#4f46e5",color:"#fff",border:"none",borderRadius:10,padding:"8px 18px",fontWeight:700,fontSize:14,cursor:"pointer"}}>Save</button>
       </div>
       {reminder&&(
@@ -443,19 +562,22 @@ function ImportPopup({note,onAdd,onDismiss,dark}){
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function QuickNotes(){
-  const [locked,setLocked]         =useState(true);
-  const [setupPin,setSetupPin]     =useState(!localStorage.getItem(PIN_KEY));
-  const [dark,setDark]             =useState(()=>localStorage.getItem(DARK_KEY)==="true");
-  const [notes,setNotes]           =useState(()=>{try{return JSON.parse(localStorage.getItem(NOTES_KEY))||SAMPLE_NOTES;}catch{return SAMPLE_NOTES;}});
-  const [toast,setToast]           =useState(null);
-  const [search,setSearch]         =useState("");
-  const [activeCat,setActiveCat]   =useState("All");
-  const [editing,setEditing]       =useState(null);
-  const [isNew,setIsNew]           =useState(false);
-  const [globalCopy,setGlobalCopy] =useState(true);
-  const [importNote,setImportNote] =useState(null);
+  const [lockEnabled,setLockEnabled] =useState(()=>localStorage.getItem(LOCK_KEY)!=="false");
+  const [locked,setLocked]           =useState(()=>localStorage.getItem(LOCK_KEY)!=="false");
+  const [setupPin,setSetupPin]       =useState(!localStorage.getItem(PIN_KEY));
+  const [dark,setDark]               =useState(()=>localStorage.getItem(DARK_KEY)==="true");
+  const [notes,setNotes]             =useState(()=>{try{return JSON.parse(localStorage.getItem(NOTES_KEY))||SAMPLE_NOTES;}catch{return SAMPLE_NOTES;}});
+  const [toast,setToast]             =useState(null);
+  const [search,setSearch]           =useState("");
+  const [activeCat,setActiveCat]     =useState("All");
+  const [editing,setEditing]         =useState(null);
+  const [isNew,setIsNew]             =useState(false);
+  const [globalCopy,setGlobalCopy]   =useState(true);
+  const [importNote,setImportNote]   =useState(null);
   const [showReminderPanel,setShowReminderPanel]=useState(false);
-  const [fabOpen,setFabOpen]=useState(false);
+  const [quickReminder,setQuickReminder]=useState(false);
+  const [fabOpen,setFabOpen]         =useState(false);
+  const [showSettings,setShowSettings]=useState(false);
 
   useEffect(()=>{
     const p=new URLSearchParams(window.location.search);
@@ -464,8 +586,9 @@ export default function QuickNotes(){
   },[]);
   useEffect(()=>{localStorage.setItem(NOTES_KEY,JSON.stringify(notes));},[notes]);
   useEffect(()=>{localStorage.setItem(DARK_KEY,dark);},[dark]);
+  useEffect(()=>{localStorage.setItem(LOCK_KEY,lockEnabled);},[lockEnabled]);
 
-  // Schedule notifications
+  // Notifications
   useEffect(()=>{
     if("Notification"in window&&Notification.permission==="default")Notification.requestPermission();
     const check=()=>{
@@ -475,16 +598,15 @@ export default function QuickNotes(){
         const [h,m]=(note.reminder.time||"23:58").split(":").map(Number);
         const target=new Date(note.reminder.date);
         target.setHours(h,m,0,0);
-        // For recurring, set to this year
         if(note.reminder.type==="birthday"||note.reminder.type==="anniversary"){
           target.setFullYear(now.getFullYear());
-          if(target<now)target.setFullYear(now.getFullYear()+1);
+          if(target<=now)target.setFullYear(now.getFullYear()+1);
         }
         const diff=target-now;
         if(diff>0&&diff<60000){
           setTimeout(()=>{
             if(Notification.permission==="granted"){
-              const n=new Notification(`${note.reminder.type==="birthday"?"🎂":"🔔"} ${note.reminder.label}`,{body:`Tap to open WhatsApp and send your message`,icon:"/icon.svg"});
+              const n=new Notification(`${note.reminder.type==="birthday"?"🎂":"🔔"} ${note.reminder.label}`,{body:"Tap to send WhatsApp message",icon:"/icon.svg"});
               if(note.reminder.phone)n.onclick=()=>window.open(`https://wa.me/${note.reminder.phone.replace(/[^0-9+]/g,"")}?text=${encodeURIComponent(note.reminder.message)}`,"_blank");
             }
           },diff);
@@ -513,10 +635,8 @@ export default function QuickNotes(){
     const plainText=note.type==="checklist"?note.items.map(i=>`${i.done?"✓":"○"} ${i.text}`).join("\n"):note.content;
     let shareUrl=longUrl;
     if(longUrl){try{const r=await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(longUrl)}`);if(r.ok)shareUrl=await r.text();}catch{shareUrl=longUrl;}}
-    if(navigator.share&&shareUrl){
-      try{await navigator.share({title:note.title,text:`📋 ${note.title}\n\nTap to add to your QuickNotes 👇`,url:shareUrl});}
-      catch(e){if(e.name!=="AbortError")fallbackCopy(shareUrl);}
-    }else if(shareUrl){fallbackCopy(shareUrl);showToast("Link copied!");}
+    if(navigator.share&&shareUrl){try{await navigator.share({title:note.title,text:`📋 ${note.title}\n\nTap to add to your QuickNotes 👇`,url:shareUrl});}catch(e){if(e.name!=="AbortError")fallbackCopy(shareUrl);}}
+    else if(shareUrl){fallbackCopy(shareUrl);showToast("Link copied!");}
     else{fallbackCopy(plainText);showToast("Copied!");}
   };
   const addImportedNote=()=>{
@@ -539,58 +659,42 @@ export default function QuickNotes(){
   const card=dark?"#1f2937":"#fff";
   const subText=dark?"#9ca3af":"#6b7280";
 
-  if(locked)return <PinScreen isSetup={setupPin} onUnlock={()=>{setLocked(false);setSetupPin(false);}}/>;
-  if(editing!==null)return <NoteEditor note={isNew?null:editing} onSave={saveNote} onClose={()=>setEditing(null)} allNotes={notes} dark={dark}/>;
+  if(locked&&lockEnabled)return<PinScreen isSetup={setupPin} onUnlock={()=>{setLocked(false);setSetupPin(false);}}/>;
+  if(showSettings)return<SettingsScreen onClose={()=>setShowSettings(false)} dark={dark} setDark={setDark} lockEnabled={lockEnabled} setLockEnabled={setLockEnabled} globalCopy={globalCopy} setGlobalCopy={setGlobalCopy} notes={notes} setNotes={setNotes}/>;
+  if(editing!==null)return<NoteEditor note={isNew?null:editing} onSave={saveNote} onClose={()=>setEditing(null)} allNotes={notes} dark={dark}/>;
 
   return(
     <div style={{minHeight:"100vh",background:bg,fontFamily:"'Inter','Segoe UI',sans-serif",transition:"background 0.3s"}}>
       {importNote&&<ImportPopup note={importNote} onAdd={addImportedNote} onDismiss={()=>setImportNote(null)} dark={dark}/>}
+
+      {/* Quick Reminder — opens directly */}
+      {quickReminder&&<ReminderModal
+        note={{title:"New Reminder",reminder:null}}
+        dark={dark}
+        onClose={()=>setQuickReminder(false)}
+        onSave={r=>{
+          const newNote={id:Date.now(),title:r.label||"Reminder",category:"Personal",content:"",type:"copy",pinned:false,created:Date.now(),items:[],reminder:{...r,active:true}};
+          setNotes(p=>[newNote,...p]);setQuickReminder(false);showToast(`Reminder "${r.label}" saved!`);
+        }}
+      />}
 
       {/* Reminder Panel */}
       {showReminderPanel&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:150,display:"flex",alignItems:"flex-end"}} onClick={()=>setShowReminderPanel(false)}>
           <div onClick={e=>e.stopPropagation()} style={{background:dark?"#1f2937":"#fff",borderRadius:"20px 20px 0 0",padding:20,width:"100%",maxHeight:"75vh",overflowY:"auto"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-              <h3 style={{margin:0,fontSize:18,fontWeight:800,color:dark?"#f9fafb":"#111"}}>🔔 All Reminders ({reminderCount})</h3>
+              <h3 style={{margin:0,fontSize:18,fontWeight:800,color:dark?"#f9fafb":"#111"}}>🔔 Reminders ({reminderCount})</h3>
               <button onClick={()=>setShowReminderPanel(false)} style={{background:"none",border:"none",fontSize:24,cursor:"pointer",color:"#9ca3af"}}>×</button>
             </div>
-            {/* Add new reminder button always visible */}
-           <button
-  onClick={()=>{
-    setShowReminderPanel(false);
-    setEditing({
-      type:"copy",
-      _openReminder:true
-    });
-    setIsNew(false);
-  }}
-  style={{
-    width:"100%",
-    background:"linear-gradient(135deg,#f59e0b,#ef4444)",
-    color:"#fff",
-    border:"none",
-    borderRadius:12,
-    padding:"12px",
-    fontWeight:700,
-    fontSize:15,
-    cursor:"pointer",
-    marginBottom:16,
-    display:"flex",
-    alignItems:"center",
-    justifyContent:"center",
-    gap:8
-  }}
->
-  ➕ Create New Reminder
-</button>
-            <div style={{fontSize:12,color:subText,marginBottom:12,textAlign:"center"}}>
-              After creating a note, tap ✏️ edit → then tap 🔔 to set date, time & WhatsApp message
-            </div>
+            <button onClick={()=>{setShowReminderPanel(false);setQuickReminder(true);}}
+              style={{width:"100%",background:"linear-gradient(135deg,#f59e0b,#ef4444)",color:"#fff",border:"none",borderRadius:12,padding:"12px",fontWeight:700,fontSize:15,cursor:"pointer",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              ➕ Create New Reminder
+            </button>
             {reminderCount===0
               ?<div style={{textAlign:"center",padding:"20px 0",color:subText}}>
                   <div style={{fontSize:40,marginBottom:8}}>🔔</div>
                   <div style={{fontWeight:600}}>No reminders yet</div>
-                  <div style={{fontSize:13,marginTop:4}}>Tap "Create New Reminder" above to get started</div>
+                  <div style={{fontSize:13,marginTop:4}}>Tap "Create New Reminder" above</div>
                 </div>
               :activeReminders.map(note=><ReminderCard key={note.id} note={note} onEdit={n=>{setShowReminderPanel(false);setEditing(n);setIsNew(false);}} onDismiss={dismissReminder} dark={dark}/>)
             }
@@ -599,47 +703,40 @@ export default function QuickNotes(){
       )}
 
       {/* Header */}
-      <div style={{background:"linear-gradient(135deg,#1e1b4b 0%,#3730a3 70%,#4f46e5 100%)",padding:"20px 16px 16px",position:"sticky",top:0,zIndex:50}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+      <div style={{background:"linear-gradient(135deg,#1e1b4b 0%,#3730a3 70%,#4f46e5 100%)",padding:"16px 16px 12px",position:"sticky",top:0,zIndex:50}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <div>
-            <h1 style={{color:"#fff",margin:0,fontSize:22,fontWeight:800}}>📋 QuickNotes</h1>
-            <p style={{color:"#a5b4fc",margin:0,fontSize:12}}>{notes.length} notes · {reminderCount} reminders</p>
+            <h1 style={{color:"#fff",margin:0,fontSize:20,fontWeight:800}}>📋 QuickNotes</h1>
+            <p style={{color:"#a5b4fc",margin:0,fontSize:11}}>{notes.length} notes · {reminderCount} reminders</p>
           </div>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <button onClick={()=>setShowReminderPanel(true)} style={{position:"relative",background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,padding:"0 10px",height:38,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:5,color:"#fff",fontWeight:700}}>
-              <span style={{fontSize:16}}>🔔</span>
-              <span>Reminders</span>
-              {reminderCount>0&&<span style={{background:"#ef4444",color:"#fff",borderRadius:20,padding:"1px 6px",fontSize:11,fontWeight:800}}>{reminderCount}</span>}
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            <button onClick={()=>setShowReminderPanel(true)} style={{position:"relative",background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,padding:"0 10px",height:36,cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:4,color:"#fff",fontWeight:700}}>
+              <span style={{fontSize:15}}>🔔</span><span>Reminders</span>
+              {reminderCount>0&&<span style={{background:"#ef4444",color:"#fff",borderRadius:20,padding:"1px 5px",fontSize:10,fontWeight:800}}>{reminderCount}</span>}
             </button>
-            <button onClick={()=>setDark(p=>!p)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:38,height:38,cursor:"pointer",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center"}}>{dark?"☀️":"🌙"}</button>
-            <div style={{display:"flex",alignItems:"center",gap:5}}>
-              <span style={{color:"#a5b4fc",fontSize:11,fontWeight:600}}>Copy</span>
-              <div onClick={()=>setGlobalCopy(p=>!p)} style={{width:40,height:22,borderRadius:11,cursor:"pointer",position:"relative",background:globalCopy?"#818cf8":"#4b5563",transition:"background 0.2s"}}>
-                <div style={{position:"absolute",top:2,left:globalCopy?20:2,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left 0.2s"}}/>
-              </div>
-            </div>
+            <button onClick={()=>setDark(p=>!p)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>{dark?"☀️":"🌙"}</button>
+            <button onClick={()=>setShowSettings(true)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
           </div>
         </div>
         <div style={{position:"relative"}}>
-          <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:16}}>🔍</span>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search notes..." style={{width:"100%",boxSizing:"border-box",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:10,padding:"10px 14px 10px 36px",color:"#fff",fontSize:14,outline:"none",fontFamily:"inherit"}}/>
+          <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:14}}>🔍</span>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search notes..." style={{width:"100%",boxSizing:"border-box",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:10,padding:"9px 14px 9px 34px",color:"#fff",fontSize:14,outline:"none",fontFamily:"inherit"}}/>
         </div>
       </div>
 
       {/* Categories */}
-      <div style={{display:"flex",gap:8,padding:"12px 16px",overflowX:"auto"}}>
+      <div style={{display:"flex",gap:8,padding:"10px 16px",overflowX:"auto"}}>
         {CATEGORIES.map(c=>{
           const col=CAT_COLORS[c];
           const count=c==="All"?notes.length:notes.filter(n=>n.category===c).length;
           return<button key={c} onClick={()=>setActiveCat(c)} style={{padding:"6px 14px",borderRadius:20,border:"none",cursor:"pointer",whiteSpace:"nowrap",background:activeCat===c?col.dot:card,color:activeCat===c?"#fff":dark?col.textD:col.text,fontWeight:600,fontSize:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)"}}>
-            {c} {count>0&&<span style={{opacity:0.7}}>({count})</span>}
+            {c}{count>0&&<span style={{opacity:0.7}}> ({count})</span>}
           </button>;
         })}
       </div>
 
       {/* Feed */}
       <div style={{padding:"0 16px 110px"}}>
-        {/* Reminders section */}
         {activeReminders.length>0&&(
           <>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
@@ -667,54 +764,26 @@ export default function QuickNotes(){
         }
       </div>
 
-      {/* Ad Banner — non-intrusive at bottom */}
       <AdBanner dark={dark}/>
 
       {/* FAB Menu */}
-      {fabOpen&&(
-        <div style={{position:"fixed",inset:0,zIndex:88}} onClick={()=>setFabOpen(false)}/>
-      )}
+      {fabOpen&&<div style={{position:"fixed",inset:0,zIndex:88}} onClick={()=>setFabOpen(false)}/>}
       {fabOpen&&(
         <div style={{position:"fixed",bottom:132,right:20,zIndex:89,display:"flex",flexDirection:"column",gap:10,alignItems:"flex-end"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>📝 New Note</span>
             <button onClick={()=>{setFabOpen(false);setEditing({type:"copy"});setIsNew(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(79,70,229,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>📝</button>
           </div>
-         <div style={{display:"flex",alignItems:"center",gap:10}}>
-  <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>☑️ New Checklist</span>
-  <button
-    onClick={()=>{
-      setFabOpen(false);
-      setEditing({
-        type:"checklist"
-      });
-      setIsNew(false);
-    }}
-    style={{
-      width:48,
-      height:48,
-      borderRadius:"50%",
-      border:"none",
-      background:"linear-gradient(135deg,#059669,#10b981)",
-      color:"#fff",
-      fontSize:22,
-      cursor:"pointer",
-      boxShadow:"0 4px 14px rgba(5,150,105,0.5)",
-      display:"flex",
-      alignItems:"center",
-      justifyContent:"center"
-    }}
-  >
-    ☑️
-  </button>
-</div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>🔔 Reminders & Events</span>
-            <button onClick={()=>{setFabOpen(false);setShowReminderPanel(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#f59e0b,#ef4444)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(245,158,11,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>🔔</button>
+            <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>☑️ New Checklist</span>
+            <button onClick={()=>{setFabOpen(false);setEditing({type:"checklist"});setIsNew(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#059669,#10b981)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(5,150,105,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>☑️</button>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>🔔 New Reminder</span>
+            <button onClick={()=>{setFabOpen(false);setQuickReminder(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#f59e0b,#ef4444)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(245,158,11,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>🔔</button>
           </div>
         </div>
       )}
-      {/* FAB main button */}
       <button onClick={()=>setFabOpen(p=>!p)} style={{position:"fixed",bottom:64,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontSize:28,cursor:"pointer",boxShadow:"0 4px 20px rgba(79,70,229,0.5)",display:"flex",alignItems:"center",justifyContent:"center",transition:"transform 0.2s",transform:fabOpen?"rotate(45deg)":"rotate(0deg)",zIndex:90}}>+</button>
 
       {toast&&<Toast msg={toast} onDone={()=>setToast(null)}/>}
