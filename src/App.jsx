@@ -477,10 +477,11 @@ function NoteCard({note,dark,globalCopy,onEdit,onDelete,onPin,onCopy,onShare,onT
 }
 
 // ── Note Editor ───────────────────────────────────────────────────────────────
-function NoteEditor({note,onSave,onClose,allNotes,dark}){
-  const [title,setTitle]=useState(note?.title||getDefaultTitle(allNotes,note?.type||"copy"));
+function NoteEditor({note,onSave,onClose,allNotes,dark,isNew}){
+  const initType=note?.type||"copy";
+  const [title,setTitle]=useState(isNew?getDefaultTitle(allNotes,initType):(note?.title||""));
   const [content,setContent]=useState(note?.content||"");
-  const [type,setType]=useState(note?.type||"copy");
+  const [type,setType]=useState(initType);
   const [category,setCategory]=useState(note?.category||"Personal");
   const [items,setItems]=useState(note?.items||[]);
   const [newItem,setNewItem]=useState("");
@@ -488,7 +489,7 @@ function NoteEditor({note,onSave,onClose,allNotes,dark}){
   const [reminder,setReminder]=useState(note?.reminder||null);
   useEffect(()=>{if(!note?.id)setTitle(getDefaultTitle(allNotes,type));},[type]);
   const addItem=()=>{if(!newItem.trim())return;setItems(p=>[...p,{id:Date.now(),text:newItem.trim(),done:false}]);setNewItem("");};
-  const save=()=>onSave({id:note?.id||Date.now(),title:title.trim()||getDefaultTitle(allNotes,type),content,type,category,items,pinned:note?.pinned||false,created:note?.created||Date.now(),reminder});
+  const save=()=>onSave({id:isNew?Date.now():note?.id||Date.now(),title:title.trim()||getDefaultTitle(allNotes,type),content,type,category,items,pinned:note?.pinned||false,created:note?.created||Date.now(),reminder});
   const bg=dark?"#111827":"#fff";const textColor=dark?"#f9fafb":"#111";const borderCol=dark?"#374151":"#e5e7eb";const subText=dark?"#9ca3af":"#6b7280";
 
   return(
@@ -661,7 +662,7 @@ export default function QuickNotes(){
 
   if(locked&&lockEnabled)return<PinScreen isSetup={setupPin} onUnlock={()=>{setLocked(false);setSetupPin(false);}}/>;
   if(showSettings)return<SettingsScreen onClose={()=>setShowSettings(false)} dark={dark} setDark={setDark} lockEnabled={lockEnabled} setLockEnabled={setLockEnabled} globalCopy={globalCopy} setGlobalCopy={setGlobalCopy} notes={notes} setNotes={setNotes}/>;
-  if(editing!==null)return<NoteEditor note={isNew?null:editing} onSave={saveNote} onClose={()=>setEditing(null)} allNotes={notes} dark={dark}/>;
+  if(editing!==null)return<NoteEditor note={editing} onSave={saveNote} onClose={()=>setEditing(null)} allNotes={notes} dark={dark} isNew={isNew}/>;
 
   return(
     <div style={{minHeight:"100vh",background:bg,fontFamily:"'Inter','Segoe UI',sans-serif",transition:"background 0.3s"}}>
@@ -710,9 +711,9 @@ export default function QuickNotes(){
             <p style={{color:"#a5b4fc",margin:0,fontSize:11}}>{notes.length} notes · {reminderCount} reminders</p>
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            <button onClick={()=>setShowReminderPanel(true)} style={{position:"relative",background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,padding:"0 10px",height:36,cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",justifyContent:"center",gap:4,color:"#fff",fontWeight:700}}>
-              <span style={{fontSize:15}}>🔔</span><span>Reminders</span>
-              {reminderCount>0&&<span style={{background:"#ef4444",color:"#fff",borderRadius:20,padding:"1px 5px",fontSize:10,fontWeight:800}}>{reminderCount}</span>}
+            <button onClick={()=>setShowReminderPanel(true)} style={{position:"relative",background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              🔔
+              {reminderCount>0&&<span style={{position:"absolute",top:-3,right:-3,background:"#ef4444",color:"#fff",borderRadius:"50%",width:15,height:15,fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{reminderCount}</span>}
             </button>
             <button onClick={()=>setDark(p=>!p)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>{dark?"☀️":"🌙"}</button>
             <button onClick={()=>setShowSettings(true)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
@@ -776,7 +777,7 @@ export default function QuickNotes(){
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>☑️ New Checklist</span>
-            <button onClick={()=>{setFabOpen(false);setEditing({type:"checklist"});setIsNew(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#059669,#10b981)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(5,150,105,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>☑️</button>
+            <button onClick={()=>{setFabOpen(false);setEditing({type:"checklist",items:[],content:"",category:"Personal",pinned:false});setIsNew(true);}} style={{width:48,height:48,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#059669,#10b981)",color:"#fff",fontSize:22,cursor:"pointer",boxShadow:"0 4px 14px rgba(5,150,105,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}}>☑️</button>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <span style={{background:"rgba(0,0,0,0.75)",color:"#fff",padding:"6px 12px",borderRadius:20,fontSize:13,fontWeight:600,whiteSpace:"nowrap"}}>🔔 New Reminder</span>
