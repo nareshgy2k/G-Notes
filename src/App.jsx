@@ -4,6 +4,7 @@ const PIN_KEY     = "qnotes_pin";
 const NOTES_KEY   = "qnotes_data";
 const DARK_KEY    = "qnotes_dark";
 const LOCK_KEY    = "qnotes_lock";
+const REMINDERS_KEY = "qnotes_reminders_standalone";
 const DEFAULT_PIN = "1234";
 const CATEGORIES  = ["All","Personal","Shopping","Work","Templates"];
 const CAT_COLORS  = {
@@ -13,11 +14,7 @@ const CAT_COLORS  = {
   Templates: {bg:"#d1fae5",bgD:"#064e3b",text:"#065f46",textD:"#6ee7b7",dot:"#10b981"},
   All:       {bg:"#f3f4f6",bgD:"#1f2937",text:"#374151",textD:"#9ca3af",dot:"#6b7280"},
 };
-const SAMPLE_NOTES = [
-  {id:1,title:"Home Address",category:"Templates",content:"123 Maple Street, Vancouver, BC V6B 1A1",type:"copy",pinned:true,created:Date.now()-86400000,items:[],reminder:null},
-  {id:2,title:"Weekly Groceries",category:"Shopping",content:"",type:"checklist",pinned:false,created:Date.now()-3600000,items:[{id:1,text:"Apples 10kg",done:false},{id:2,text:"Bananas",done:true},{id:3,text:"4L Milk",done:false},{id:4,text:"Organic Eggs",done:false},{id:5,text:"Olive Oil",done:true}],reminder:null},
-  {id:3,title:"Work Email Sign-off",category:"Work",content:"Best regards,\nYour Name\nyour@email.com",type:"copy",pinned:false,created:Date.now()-7200000,items:[],reminder:null},
-];
+const SAMPLE_NOTES = []; // Start empty for new installs
 
 const getDefaultTitle=(notes,type)=>{
   const base=type==="checklist"?"My Checklist":"My Note";
@@ -109,7 +106,7 @@ function PinScreen({onUnlock,isSetup}){
 }
 
 // ── Settings Screen ───────────────────────────────────────────────────────────
-function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalCopy,setGlobalCopy,notes,setNotes}){
+function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalCopy,setGlobalCopy,notes,setNotes,reminderCount}){
   const [changingPin,setChangingPin]=useState(false);
   const [newPin,setNewPin]=useState("");
   const [confirmPin,setConfirmPin]=useState("");
@@ -120,6 +117,45 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
   const textColor=dark?"#f9fafb":"#111";
   const subText=dark?"#9ca3af":"#6b7280";
   const border=dark?"#374151":"#e5e7eb";
+
+  const showBackupToast=(opt)=>{
+    alert(`Backup frequency set to: ${opt}\n\nNote: true automatic background email isn't possible from a browser app — you'll see a reminder banner here, and "Backup Now" does the actual export+email.`);
+  };
+
+  const doBackupNow=()=>{
+    const backupData={notes,exportedAt:new Date().toISOString(),app:"QuickNotes"};
+    const blob=new Blob([JSON.stringify(backupData,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    const dateStr=new Date().toISOString().split("T")[0];
+    a.href=url;a.download=`quicknotes-backup-${dateStr}.json`;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setTimeout(()=>{
+      const subject=encodeURIComponent("My QuickNotes Backup");
+      const body=encodeURIComponent(`Backup file downloaded on ${dateStr}.\n\nPlease attach the file named quicknotes-backup-${dateStr}.json from your Downloads folder to this email before sending.`);
+      window.open(`https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`,"_blank");
+    },800);
+  };
+
+  const handleRestoreFile=(e)=>{
+    const file=e.target.files[0];
+    if(!file)return;
+    const reader=new FileReader();
+    reader.onload=(evt)=>{
+      try{
+        const parsed=JSON.parse(evt.target.result);
+        const restoredNotes=parsed.notes||parsed;
+        if(Array.isArray(restoredNotes)){
+          if(window.confirm(`Restore ${restoredNotes.length} notes? This will replace your current notes.`)){
+            setNotes(restoredNotes);
+            alert("Notes restored successfully!");
+          }
+        } else { alert("Invalid backup file format."); }
+      }catch{ alert("Could not read backup file. Make sure it's a valid QuickNotes backup."); }
+    };
+    reader.readAsText(file);
+  };
 
   const handlePinDigit=(digit,step)=>{
     if(step===1){
@@ -214,6 +250,34 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
           <div style={{background:dark?"#374151":"#f3f4f6",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#4f46e5",fontWeight:600}}>⭐ 11:58 PM (fixed for birthdays)</div>
         </div>
 
+        {/* Backup */}
+        <div style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1,padding:"16px 0 8px"}}>Backup & Restore</div>
+        <div style={{background:card,borderRadius:12,padding:14,marginBottom:8}}>
+          <div style={{fontSize:13,color:textColor,fontWeight:600,marginBottom:4}}>📧 Email yourself a backup</div>
+          <div style={{fontSize:12,color:subText,marginBottom:10}}>Downloads a backup file, then opens Gmail so you can attach and email it to yourself</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            {["Weekly","Monthly","Manual only"].map(opt=>(
+              <button key={opt} onClick={()=>{localStorage.setItem("qnotes_backup_freq",opt);showBackupToast(opt);}}
+                style={{padding:"6px 12px",borderRadius:16,border:"none",cursor:"pointer",
+                  background:(localStorage.getItem("qnotes_backup_freq")||"Manual only")===opt?"#4f46e5":dark?"#374151":"#f3f4f6",
+                  color:(localStorage.getItem("qnotes_backup_freq")||"Manual only")===opt?"#fff":subText,fontWeight:600,fontSize:12}}>
+                {opt}
+              </button>
+            ))}
+          </div>
+          <button onClick={doBackupNow}
+            style={{width:"100%",background:"linear-gradient(135deg,#ea4335,#fbbc04)",color:"#fff",border:"none",borderRadius:10,padding:11,fontWeight:700,fontSize:13,cursor:"pointer"}}>
+            📥 Backup Now & Email
+          </button>
+          <div style={{fontSize:11,color:subText,marginTop:8}}>
+            Reminder banner will show in-app on your chosen schedule — true silent background email isn't possible from a browser/PWA without a paid server, so this stays a one-tap action.
+          </div>
+        </div>
+        <div style={{background:card,borderRadius:12,padding:14}}>
+          <div style={{fontSize:13,color:textColor,fontWeight:600,marginBottom:8}}>📂 Restore from backup file</div>
+          <input type="file" accept=".json" onChange={handleRestoreFile} style={{fontSize:12,color:subText,width:"100%"}}/>
+        </div>
+
         {/* Data */}
         <div style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1,padding:"16px 0 8px"}}>Data</div>
         <div style={{background:card,borderRadius:12,padding:14}}>
@@ -223,7 +287,7 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
           </div>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}>
             <span style={{fontSize:13,color:textColor,fontWeight:600}}>🔔 Active reminders</span>
-            <span style={{fontSize:13,color:"#4f46e5",fontWeight:700}}>{notes.filter(n=>n.reminder?.active).length}</span>
+            <span style={{fontSize:13,color:"#4f46e5",fontWeight:700}}>{reminderCount}</span>
           </div>
           <button onClick={()=>{if(window.confirm("Delete ALL notes? This cannot be undone.")){setNotes([]);localStorage.removeItem(NOTES_KEY);}}}
             style={{width:"100%",background:"#fff1f2",color:"#ef4444",border:"2px solid #fca5a5",borderRadius:10,padding:10,fontWeight:700,fontSize:13,cursor:"pointer"}}>
@@ -568,6 +632,7 @@ export default function QuickNotes(){
   const [setupPin,setSetupPin]       =useState(!localStorage.getItem(PIN_KEY));
   const [dark,setDark]               =useState(()=>localStorage.getItem(DARK_KEY)==="true");
   const [notes,setNotes]             =useState(()=>{try{return JSON.parse(localStorage.getItem(NOTES_KEY))||SAMPLE_NOTES;}catch{return SAMPLE_NOTES;}});
+  const [standaloneReminders,setStandaloneReminders]=useState(()=>{try{return JSON.parse(localStorage.getItem(REMINDERS_KEY))||[];}catch{return [];}});
   const [toast,setToast]             =useState(null);
   const [search,setSearch]           =useState("");
   const [activeCat,setActiveCat]     =useState("All");
@@ -577,6 +642,7 @@ export default function QuickNotes(){
   const [importNote,setImportNote]   =useState(null);
   const [showReminderPanel,setShowReminderPanel]=useState(false);
   const [quickReminder,setQuickReminder]=useState(false);
+  const [editingStandaloneReminder,setEditingStandaloneReminder]=useState(null);
   const [fabOpen,setFabOpen]         =useState(false);
   const [showSettings,setShowSettings]=useState(false);
 
@@ -586,36 +652,39 @@ export default function QuickNotes(){
     if(s){const d=decodeNote(s);if(d)setImportNote(d);window.history.replaceState({},"",window.location.pathname);}
   },[]);
   useEffect(()=>{localStorage.setItem(NOTES_KEY,JSON.stringify(notes));},[notes]);
+  useEffect(()=>{localStorage.setItem(REMINDERS_KEY,JSON.stringify(standaloneReminders));},[standaloneReminders]);
   useEffect(()=>{localStorage.setItem(DARK_KEY,dark);},[dark]);
   useEffect(()=>{localStorage.setItem(LOCK_KEY,lockEnabled);},[lockEnabled]);
 
   // Notifications
   useEffect(()=>{
     if("Notification"in window&&Notification.permission==="default")Notification.requestPermission();
-    const check=()=>{
+    const checkOne=(r)=>{
+      if(!r?.active||!r?.date)return;
+      const [h,m]=(r.time||"23:58").split(":").map(Number);
+      const target=new Date(r.date);
+      target.setHours(h,m,0,0);
       const now=new Date();
-      notes.forEach(note=>{
-        if(!note.reminder?.active||!note.reminder?.date)return;
-        const [h,m]=(note.reminder.time||"23:58").split(":").map(Number);
-        const target=new Date(note.reminder.date);
-        target.setHours(h,m,0,0);
-        if(note.reminder.type==="birthday"||note.reminder.type==="anniversary"){
-          target.setFullYear(now.getFullYear());
-          if(target<=now)target.setFullYear(now.getFullYear()+1);
-        }
-        const diff=target-now;
-        if(diff>0&&diff<60000){
-          setTimeout(()=>{
-            if(Notification.permission==="granted"){
-              const n=new Notification(`${note.reminder.type==="birthday"?"🎂":"🔔"} ${note.reminder.label}`,{body:"Tap to send WhatsApp message",icon:"/icon.svg"});
-              if(note.reminder.phone)n.onclick=()=>window.open(`https://wa.me/${note.reminder.phone.replace(/[^0-9+]/g,"")}?text=${encodeURIComponent(note.reminder.message)}`,"_blank");
-            }
-          },diff);
-        }
-      });
+      if(r.type==="birthday"||r.type==="anniversary"){
+        target.setFullYear(now.getFullYear());
+        if(target<=now)target.setFullYear(now.getFullYear()+1);
+      }
+      const diff=target-now;
+      if(diff>0&&diff<60000){
+        setTimeout(()=>{
+          if(Notification.permission==="granted"){
+            const n=new Notification(`${r.type==="birthday"?"🎂":"🔔"} ${r.label}`,{body:"Tap to send WhatsApp message",icon:"/icon.svg"});
+            if(r.phone)n.onclick=()=>window.open(`https://wa.me/${r.phone.replace(/[^0-9+]/g,"")}?text=${encodeURIComponent(r.message)}`,"_blank");
+          }
+        },diff);
+      }
+    };
+    const check=()=>{
+      notes.forEach(note=>checkOne(note.reminder));
+      standaloneReminders.forEach(r=>checkOne(r));
     };
     check();const interval=setInterval(check,30000);return()=>clearInterval(interval);
-  },[notes]);
+  },[notes,standaloneReminders]);
 
   const showToast=msg=>setToast(msg);
   const fallbackCopy=text=>{
@@ -647,10 +716,27 @@ export default function QuickNotes(){
   const toggleItem=(nId,iId)=>setNotes(p=>p.map(n=>n.id===nId?{...n,items:n.items.map(i=>i.id===iId?{...i,done:!i.done}:i)}:n));
   const togglePin=id=>setNotes(p=>p.map(n=>n.id===id?{...n,pinned:!n.pinned}:n));
   const deleteNote=id=>setNotes(p=>p.filter(n=>n.id!==id));
-  const dismissReminder=id=>setNotes(p=>p.map(n=>n.id===id?{...n,reminder:{...n.reminder,active:false}}:n));
+  const dismissReminder=id=>{
+    if(standaloneReminders.find(r=>r.id===id)){
+      setStandaloneReminders(p=>p.filter(r=>r.id!==id));
+    } else {
+      setNotes(p=>p.map(n=>n.id===id?{...n,reminder:{...n.reminder,active:false}}:n));
+    }
+  };
+  const editReminder=(item)=>{
+    if(item._standalone){
+      setShowReminderPanel(false);
+      setEditingStandaloneReminder(item);
+    } else {
+      setShowReminderPanel(false);
+      setEditing(item);
+      setIsNew(false);
+    }
+  };
   const saveNote=note=>{setNotes(p=>p.find(n=>n.id===note.id)?p.map(n=>n.id===note.id?note:n):[note,...p]);setEditing(null);};
 
-  const activeReminders=notes.filter(n=>n.reminder?.active);
+  const noteReminders=notes.filter(n=>n.reminder?.active);
+  const activeReminders=[...standaloneReminders.map(r=>({id:r.id,title:r.label,reminder:r,_standalone:true})),...noteReminders];
   const reminderCount=activeReminders.length;
   const filtered=notes
     .filter(n=>activeCat==="All"||n.category===activeCat)
@@ -661,7 +747,14 @@ export default function QuickNotes(){
   const subText=dark?"#9ca3af":"#6b7280";
 
   if(locked&&lockEnabled)return<PinScreen isSetup={setupPin} onUnlock={()=>{setLocked(false);setSetupPin(false);}}/>;
-  if(showSettings)return<SettingsScreen onClose={()=>setShowSettings(false)} dark={dark} setDark={setDark} lockEnabled={lockEnabled} setLockEnabled={setLockEnabled} globalCopy={globalCopy} setGlobalCopy={setGlobalCopy} notes={notes} setNotes={setNotes}/>;
+  if(showSettings)return<SettingsScreen onClose={()=>setShowSettings(false)} dark={dark} setDark={setDark} lockEnabled={lockEnabled} setLockEnabled={setLockEnabled} globalCopy={globalCopy} setGlobalCopy={setGlobalCopy} notes={notes} setNotes={setNotes} reminderCount={reminderCount}/>;
+  if(editingStandaloneReminder)return<ReminderModal note={{title:editingStandaloneReminder.title,reminder:editingStandaloneReminder.reminder}} dark={dark}
+    onClose={()=>setEditingStandaloneReminder(null)}
+    onSave={r=>{
+      setStandaloneReminders(p=>p.map(x=>x.id===editingStandaloneReminder.id?{...x,...r}:x));
+      setEditingStandaloneReminder(null);
+      showToast("Reminder updated!");
+    }}/>;
   if(editing!==null)return<NoteEditor note={editing} onSave={saveNote} onClose={()=>setEditing(null)} allNotes={notes} dark={dark} isNew={isNew}/>;
 
   return(
@@ -674,8 +767,10 @@ export default function QuickNotes(){
         dark={dark}
         onClose={()=>setQuickReminder(false)}
         onSave={r=>{
-          const newNote={id:Date.now(),title:r.label||"Reminder",category:"Personal",content:"",type:"copy",pinned:false,created:Date.now(),items:[],reminder:{...r,active:true}};
-          setNotes(p=>[newNote,...p]);setQuickReminder(false);showToast(`Reminder "${r.label}" saved!`);
+          const newReminder={id:Date.now(),...r,active:true};
+          setStandaloneReminders(p=>[newReminder,...p]);
+          setQuickReminder(false);
+          showToast(`Reminder "${r.label}" saved!`);
         }}
       />}
 
@@ -697,7 +792,7 @@ export default function QuickNotes(){
                   <div style={{fontWeight:600}}>No reminders yet</div>
                   <div style={{fontSize:13,marginTop:4}}>Tap "Create New Reminder" above</div>
                 </div>
-              :activeReminders.map(note=><ReminderCard key={note.id} note={note} onEdit={n=>{setShowReminderPanel(false);setEditing(n);setIsNew(false);}} onDismiss={dismissReminder} dark={dark}/>)
+              :activeReminders.map(item=><ReminderCard key={item.id} note={item} onEdit={editReminder} onDismiss={dismissReminder} dark={dark}/>)
             }
           </div>
         </div>
@@ -745,7 +840,7 @@ export default function QuickNotes(){
               <span style={{fontSize:11,fontWeight:700,color:"#7c3aed",textTransform:"uppercase",letterSpacing:1}}>🔔 Reminders</span>
               <div style={{flex:1,height:1,background:dark?"#374151":"#e9d5ff"}}/>
             </div>
-            {activeReminders.map(note=><ReminderCard key={note.id} note={note} onEdit={n=>{setEditing(n);setIsNew(false);}} onDismiss={dismissReminder} dark={dark}/>)}
+            {activeReminders.map(item=><ReminderCard key={item.id} note={item} onEdit={editReminder} onDismiss={dismissReminder} dark={dark}/>)}
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,marginTop:4}}>
               <div style={{flex:1,height:1,background:dark?"#374151":"#e5e7eb"}}/>
               <span style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1}}>📋 Notes</span>
