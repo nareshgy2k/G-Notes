@@ -119,23 +119,45 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
   const border=dark?"#374151":"#e5e7eb";
 
   const showBackupToast=(opt)=>{
-    alert(`Backup frequency set to: ${opt}\n\nNote: true automatic background email isn't possible from a browser app — you'll see a reminder banner here, and "Backup Now" does the actual export+email.`);
+    alert(`Backup frequency set to: ${opt}.\n\nYou'll see a reminder banner in Settings on this schedule. The actual backup is always a one-tap manual action below — no app can silently email files in the background without a paid server.`);
   };
 
   const doBackupNow=()=>{
+    const email=window.prompt("Enter the email address to send this backup to:", localStorage.getItem("qnotes_backup_email")||"");
+    if(!email)return;
+    if(!email.includes("@")){alert("Please enter a valid email address.");return;}
+    localStorage.setItem("qnotes_backup_email",email);
+
     const backupData={notes,exportedAt:new Date().toISOString(),app:"QuickNotes"};
+    const dateStr=new Date().toISOString().split("T")[0];
+    const fileName=`quicknotes-backup-${dateStr}.json`;
     const blob=new Blob([JSON.stringify(backupData,null,2)],{type:"application/json"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");
-    const dateStr=new Date().toISOString().split("T")[0];
-    a.href=url;a.download=`quicknotes-backup-${dateStr}.json`;
+    a.href=url;a.download=fileName;
     document.body.appendChild(a);a.click();document.body.removeChild(a);
     URL.revokeObjectURL(url);
+
+    alert(`Step 1 done: "${fileName}" downloaded to your device.\n\nNext: Gmail will open addressed to ${email}. Tap the 📎 attach icon in Gmail and pick that file from your Downloads/Files app before hitting send.`);
+
     setTimeout(()=>{
-      const subject=encodeURIComponent("My QuickNotes Backup");
-      const body=encodeURIComponent(`Backup file downloaded on ${dateStr}.\n\nPlease attach the file named quicknotes-backup-${dateStr}.json from your Downloads folder to this email before sending.`);
-      window.open(`https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`,"_blank");
-    },800);
+      const subject=encodeURIComponent("My QuickNotes Backup - "+dateStr);
+      const body=encodeURIComponent(`Backup attached.\n\nFile name to attach: ${fileName}\n(Find it in your Downloads or Files app, then tap the paperclip in Gmail to attach it.)`);
+      window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${subject}&body=${body}`,"_blank");
+    },1200);
+  };
+
+  const doLocalBackupOnly=()=>{
+    const backupData={notes,exportedAt:new Date().toISOString(),app:"QuickNotes"};
+    const dateStr=new Date().toISOString().split("T")[0];
+    const fileName=`quicknotes-backup-${dateStr}.json`;
+    const blob=new Blob([JSON.stringify(backupData,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=fileName;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    alert(`Saved "${fileName}" to your Downloads. You can restore it anytime using "Restore from backup file" below.`);
   };
 
   const handleRestoreFile=(e)=>{
@@ -266,11 +288,15 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
             ))}
           </div>
           <button onClick={doBackupNow}
-            style={{width:"100%",background:"linear-gradient(135deg,#ea4335,#fbbc04)",color:"#fff",border:"none",borderRadius:10,padding:11,fontWeight:700,fontSize:13,cursor:"pointer"}}>
+            style={{width:"100%",background:"linear-gradient(135deg,#ea4335,#fbbc04)",color:"#fff",border:"none",borderRadius:10,padding:11,fontWeight:700,fontSize:13,cursor:"pointer",marginBottom:8}}>
             📥 Backup Now & Email
           </button>
+          <button onClick={doLocalBackupOnly}
+            style={{width:"100%",background:dark?"#374151":"#f3f4f6",color:textColor,border:"none",borderRadius:10,padding:11,fontWeight:700,fontSize:13,cursor:"pointer"}}>
+            💾 Save Backup File Only (no email)
+          </button>
           <div style={{fontSize:11,color:subText,marginTop:8}}>
-            Reminder banner will show in-app on your chosen schedule — true silent background email isn't possible from a browser/PWA without a paid server, so this stays a one-tap action.
+            Reminder banner will show in-app on your chosen schedule. True silent background email isn't possible from a browser/PWA without a paid server — both options above are one-tap manual actions.
           </div>
         </div>
         <div style={{background:card,borderRadius:12,padding:14}}>
@@ -808,7 +834,7 @@ export default function QuickNotes(){
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
             <button onClick={()=>setShowReminderPanel(true)} style={{position:"relative",background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>
               🔔
-              {reminderCount>0&&<span style={{position:"absolute",top:-3,right:-3,background:"#ef4444",color:"#fff",borderRadius:"50%",width:15,height:15,fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{reminderCount}</span>}
+              {reminderCount>0&&<span style={{position:"absolute",top:6,right:6,background:"#ef4444",borderRadius:"50%",width:8,height:8}}/>}
             </button>
             <button onClick={()=>setDark(p=>!p)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>{dark?"☀️":"🌙"}</button>
             <button onClick={()=>setShowSettings(true)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
