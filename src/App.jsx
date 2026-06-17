@@ -122,7 +122,7 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
     alert(`Backup frequency set to: ${opt}.\n\nYou'll see a reminder banner in Settings on this schedule. The actual backup is always a one-tap manual action below — no app can silently email files in the background without a paid server.`);
   };
 
-  const doBackupNow=()=>{
+  const doBackupNow=async()=>{
     const email=window.prompt("Enter the email address to send this backup to:", localStorage.getItem("qnotes_backup_email")||"");
     if(!email)return;
     if(!email.includes("@")){alert("Please enter a valid email address.");return;}
@@ -131,33 +131,74 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
     const backupData={notes,exportedAt:new Date().toISOString(),app:"QuickNotes"};
     const dateStr=new Date().toISOString().split("T")[0];
     const fileName=`quicknotes-backup-${dateStr}.json`;
-    const blob=new Blob([JSON.stringify(backupData,null,2)],{type:"application/json"});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");
-    a.href=url;a.download=fileName;
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const jsonStr=JSON.stringify(backupData,null,2);
+    let savedLocation="your Downloads folder";
 
-    alert(`Step 1 done: "${fileName}" downloaded to your device.\n\nNext: Gmail will open addressed to ${email}. Tap the 📎 attach icon in Gmail and pick that file from your Downloads/Files app before hitting send.`);
+    if(window.Capacitor?.Plugins?.Filesystem){
+      try{
+        await window.Capacitor.Plugins.Filesystem.writeFile({path:fileName,data:jsonStr,directory:"DOCUMENTS",encoding:"utf8"});
+        savedLocation="your device's Documents folder (Files app)";
+      }catch(err){
+        alert("Could not save file: "+(err?.message||err));
+        return;
+      }
+    } else {
+      try{
+        const blob=new Blob([jsonStr],{type:"application/json"});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement("a");
+        a.href=url;a.download=fileName;
+        document.body.appendChild(a);a.click();document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }catch(err){
+        alert("Could not save file: "+(err?.message||err));
+        return;
+      }
+    }
+
+    alert(`Step 1 done: "${fileName}" saved to ${savedLocation}.\n\nNext: Gmail will open addressed to ${email}. Tap the 📎 attach icon in Gmail and pick that file before hitting send.`);
 
     setTimeout(()=>{
       const subject=encodeURIComponent("My QuickNotes Backup - "+dateStr);
-      const body=encodeURIComponent(`Backup attached.\n\nFile name to attach: ${fileName}\n(Find it in your Downloads or Files app, then tap the paperclip in Gmail to attach it.)`);
+      const body=encodeURIComponent(`Backup attached.\n\nFile name to attach: ${fileName}\nLocation: ${savedLocation}\n\nOpen Files app or Gmail's attach screen, look in Documents, and pick this file.`);
       window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${subject}&body=${body}`,"_blank");
     },1200);
   };
 
-  const doLocalBackupOnly=()=>{
+  const doLocalBackupOnly=async()=>{
     const backupData={notes,exportedAt:new Date().toISOString(),app:"QuickNotes"};
     const dateStr=new Date().toISOString().split("T")[0];
     const fileName=`quicknotes-backup-${dateStr}.json`;
-    const blob=new Blob([JSON.stringify(backupData,null,2)],{type:"application/json"});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");
-    a.href=url;a.download=fileName;
-    document.body.appendChild(a);a.click();document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    alert(`Saved "${fileName}" to your Downloads. You can restore it anytime using "Restore from backup file" below.`);
+    const jsonStr=JSON.stringify(backupData,null,2);
+
+    // Try Capacitor Filesystem plugin first (works inside APK)
+    if(window.Capacitor?.Plugins?.Filesystem){
+      try{
+        await window.Capacitor.Plugins.Filesystem.writeFile({
+          path:fileName,
+          data:jsonStr,
+          directory:"DOCUMENTS",
+          encoding:"utf8"
+        });
+        alert(`Saved "${fileName}" to your device's Documents folder (via Files app).`);
+        return;
+      }catch(err){
+        alert("Filesystem save failed: "+(err?.message||err)+"\n\nFalling back to browser download.");
+      }
+    }
+
+    // Fallback for PWA/browser — works on Chrome/Safari, NOT inside APK WebView
+    try{
+      const blob=new Blob([jsonStr],{type:"application/json"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url;a.download=fileName;
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert(`If you're on a website (not the installed app), check your Downloads folder for "${fileName}".\n\nNote: this download method does NOT work inside the installed APK — only in a normal browser tab.`);
+    }catch(err){
+      alert("Backup failed: "+(err?.message||err));
+    }
   };
 
   const handleRestoreFile=(e)=>{
@@ -832,9 +873,8 @@ export default function QuickNotes(){
             <p style={{color:"#a5b4fc",margin:0,fontSize:11}}>{notes.length} notes · {reminderCount} reminders</p>
           </div>
           <div style={{display:"flex",gap:6,alignItems:"center"}}>
-            <button onClick={()=>setShowReminderPanel(true)} style={{position:"relative",background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <button onClick={()=>setShowReminderPanel(true)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:20,display:"flex",alignItems:"center",justifyContent:"center"}}>
               🔔
-              {reminderCount>0&&<span style={{position:"absolute",top:6,right:6,background:"#ef4444",borderRadius:"50%",width:8,height:8}}/>}
             </button>
             <button onClick={()=>setDark(p=>!p)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>{dark?"☀️":"🌙"}</button>
             <button onClick={()=>setShowSettings(true)} style={{background:"rgba(255,255,255,0.15)",border:"none",borderRadius:10,width:36,height:36,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙️</button>
