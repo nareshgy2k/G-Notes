@@ -136,10 +136,10 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
 
     if(window.Capacitor?.Plugins?.Filesystem){
       try{
-        await window.Capacitor.Plugins.Filesystem.writeFile({path:fileName,data:jsonStr,directory:"DOCUMENTS",encoding:"utf8"});
-        savedLocation="your device's Documents folder (Files app)";
+        const result=await window.Capacitor.Plugins.Filesystem.writeFile({path:fileName,data:jsonStr,directory:"EXTERNAL",encoding:"utf8",recursive:true});
+        savedLocation=result?.uri||"Files app → Internal storage → Android/data/[app id]/files";
       }catch(err){
-        alert("Could not save file: "+(err?.message||err));
+        alert("Could not save file: "+(err?.message||err)+"\n\nMake sure @capacitor/filesystem is installed and synced, then rebuild.");
         return;
       }
     } else {
@@ -170,21 +170,25 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
     const dateStr=new Date().toISOString().split("T")[0];
     const fileName=`quicknotes-backup-${dateStr}.json`;
     const jsonStr=JSON.stringify(backupData,null,2);
+    const FS=window.Capacitor?.Plugins?.Filesystem;
 
     // Try Capacitor Filesystem plugin first (works inside APK)
-    if(window.Capacitor?.Plugins?.Filesystem){
+    if(FS){
       try{
-        await window.Capacitor.Plugins.Filesystem.writeFile({
+        const result=await FS.writeFile({
           path:fileName,
           data:jsonStr,
-          directory:"DOCUMENTS",
-          encoding:"utf8"
+          directory:"EXTERNAL",   // public-ish app storage, visible via Files app > Android/data
+          encoding:"utf8",
+          recursive:true
         });
-        alert(`Saved "${fileName}" to your device's Documents folder (via Files app).`);
+        alert(`Saved successfully.\n\nFile: ${fileName}\nFull path: ${result?.uri||"(path not returned by plugin)"}\n\nOpen your phone's "Files" app, tap the 3-line menu, choose "Show internal storage", then browse to Android/data/[app id]/files to find it.`);
         return;
       }catch(err){
-        alert("Filesystem save failed: "+(err?.message||err)+"\n\nFalling back to browser download.");
+        alert("Filesystem save failed: "+(err?.message||JSON.stringify(err))+"\n\nThis usually means @capacitor/filesystem isn't installed/synced yet, or storage permission was denied. Falling back to browser download (won't work inside the APK).");
       }
+    } else {
+      alert("Capacitor Filesystem plugin not detected in this build.\n\nRun on your laptop:\nnpm install @capacitor/filesystem\nnpx cap sync\n\nThen rebuild the APK. Falling back to browser download for now (only works in a real browser tab, not inside the installed app).");
     }
 
     // Fallback for PWA/browser — works on Chrome/Safari, NOT inside APK WebView
@@ -694,8 +698,8 @@ function ImportPopup({note,onAdd,onDismiss,dark}){
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function QuickNotes(){
-  const [lockEnabled,setLockEnabled] =useState(()=>localStorage.getItem(LOCK_KEY)!=="false");
-  const [locked,setLocked]           =useState(()=>localStorage.getItem(LOCK_KEY)!=="false");
+  const [lockEnabled,setLockEnabled] =useState(()=>localStorage.getItem(LOCK_KEY)==="true");
+  const [locked,setLocked]           =useState(()=>localStorage.getItem(LOCK_KEY)==="true");
   const [setupPin,setSetupPin]       =useState(!localStorage.getItem(PIN_KEY));
   const [dark,setDark]               =useState(()=>localStorage.getItem(DARK_KEY)==="true");
   const [notes,setNotes]             =useState(()=>{try{return JSON.parse(localStorage.getItem(NOTES_KEY))||SAMPLE_NOTES;}catch{return SAMPLE_NOTES;}});
