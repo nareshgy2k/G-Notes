@@ -6,6 +6,9 @@ const DARK_KEY    = "qnotes_dark";
 const LOCK_KEY    = "qnotes_lock";
 const REMINDERS_KEY = "qnotes_reminders_standalone";
 const DEFAULT_PIN = "1234";
+// IMPORTANT: this must be your real deployed website URL.
+// Inside the installed APK, window.location.href points to "localhost", which is useless for shared links.
+const PRODUCTION_URL = "https://g-notes-three.vercel.app";
 const CATEGORIES  = ["All","Personal","Shopping","Work","Templates"];
 const CAT_COLORS  = {
   Personal:  {bg:"#ede9fe",bgD:"#2e1065",text:"#5b21b6",textD:"#c4b5fd",dot:"#7c3aed"},
@@ -771,7 +774,9 @@ export default function QuickNotes(){
   };
   const shareNote=async note=>{
     const encoded=encodeNote(note);
-    const base=window.location.href.split("?")[0];
+    const currentOrigin=window.location.href.split("?")[0];
+    const isLocalOrCapacitor = currentOrigin.includes("localhost") || currentOrigin.startsWith("capacitor://") || currentOrigin.startsWith("file://") || currentOrigin.startsWith("http://localhost");
+    const base = isLocalOrCapacitor ? PRODUCTION_URL : currentOrigin;
     const longUrl=encoded?`${base}?note=${encoded}`:null;
     const plainText=note.type==="checklist"?note.items.map(i=>`${i.done?"✓":"○"} ${i.text}`).join("\n"):note.content;
     let shareUrl=longUrl;
