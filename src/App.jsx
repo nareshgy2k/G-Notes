@@ -4,6 +4,7 @@ const PIN_KEY     = "qnotes_pin";
 const NOTES_KEY   = "qnotes_data";
 const DARK_KEY    = "qnotes_dark";
 const LOCK_KEY    = "qnotes_lock";
+const BIOMETRIC_KEY = "qnotes_biometric";
 const REMINDERS_KEY = "qnotes_reminders_standalone";
 const DEFAULT_PIN = "1234";
 // IMPORTANT: this must be your real deployed website URL.
@@ -46,9 +47,14 @@ const daysUntilDate=(dateStr,type)=>{
 };
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
-function Toast({msg,onDone}){
-  useEffect(()=>{const t=setTimeout(onDone,2500);return()=>clearTimeout(t);},[]);
-  return<div style={{position:"fixed",bottom:88,left:"50%",transform:"translateX(-50%)",background:"#1a1a2e",color:"#fff",padding:"10px 20px",borderRadius:24,fontSize:13,fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:8,whiteSpace:"nowrap"}}>✅ {msg}</div>;
+function Toast({msg,onDone,actionLabel,onAction}){
+  useEffect(()=>{const t=setTimeout(onDone,actionLabel?5000:2500);return()=>clearTimeout(t);},[]);
+  return(
+    <div style={{position:"fixed",bottom:88,left:"50%",transform:"translateX(-50%)",background:"#1a1a2e",color:"#fff",padding:"10px 14px 10px 20px",borderRadius:24,fontSize:13,fontWeight:600,zIndex:9999,boxShadow:"0 4px 20px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}}>
+      <span>✅ {msg}</span>
+      {actionLabel&&<button onClick={()=>{onAction();onDone();}} style={{background:"#4f46e5",color:"#fff",border:"none",borderRadius:16,padding:"5px 14px",fontWeight:700,fontSize:12,cursor:"pointer"}}>{actionLabel}</button>}
+    </div>
+  );
 }
 
 // ── Ad Banner ─────────────────────────────────────────────────────────────────
@@ -70,11 +76,34 @@ function Toggle({value,onChange}){
 }
 
 // ── PIN Screen ────────────────────────────────────────────────────────────────
-function PinScreen({onUnlock,isSetup}){
+function PinScreen({onUnlock,isSetup,biometricEnabled}){
   const [digits,setDigits]=useState([]);
   const [shake,setShake]=useState(false);
   const [confirm,setConfirm]=useState(null);
+  const [bioStatus,setBioStatus]=useState(biometricEnabled&&!isSetup?"trying":"idle");
   const stored=localStorage.getItem(PIN_KEY)||DEFAULT_PIN;
+
+  const tryBiometric=async()=>{
+    const Bio=window.Capacitor?.Plugins?.BiometricAuth;
+    if(!Bio){setBioStatus("unavailable");return;}
+    setBioStatus("trying");
+    try{
+      await Bio.authenticate({
+        reason:"Unlock QuickNotes",
+        cancelTitle:"Use PIN instead",
+        allowDeviceCredential:true
+      });
+      setBioStatus("success");
+      onUnlock();
+    }catch(err){
+      setBioStatus("failed");
+    }
+  };
+
+  useEffect(()=>{
+    if(biometricEnabled&&!isSetup) tryBiometric();
+  },[]);
+
   const press=d=>{
     if(digits.length>=4)return;
     const next=[...digits,d];setDigits(next);
@@ -93,8 +122,20 @@ function PinScreen({onUnlock,isSetup}){
     <div style={{minHeight:"100vh",background:"linear-gradient(160deg,#0f0c29,#302b63,#24243e)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
       <div style={{fontSize:48,marginBottom:8}}>📋</div>
       <h2 style={{color:"#fff",fontWeight:800,fontSize:22,margin:"0 0 4px"}}>QuickNotes</h2>
-      <p style={{color:"#a5b4fc",fontSize:13,margin:"0 0 36px"}}>{isSetup?(confirm?"Confirm PIN":"Set 4-digit PIN"):"Enter PIN"}</p>
-      <div style={{display:"flex",gap:16,marginBottom:40,animation:shake?"shake 0.4s":"none"}}>
+      <p style={{color:"#a5b4fc",fontSize:13,margin:"0 0 20px"}}>{isSetup?(confirm?"Confirm PIN":"Set 4-digit PIN"):"Enter PIN"}</p>
+
+      {biometricEnabled&&!isSetup&&(
+        <div style={{marginBottom:24,textAlign:"center"}}>
+          {bioStatus==="trying"&&<div style={{color:"#a5b4fc",fontSize:13}}>👆 Checking fingerprint/face...</div>}
+          {(bioStatus==="failed"||bioStatus==="unavailable")&&(
+            <button onClick={tryBiometric} style={{background:"rgba(255,255,255,0.12)",border:"1px solid #818cf8",borderRadius:20,padding:"8px 18px",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+              👆 Try Fingerprint / Face Again
+            </button>
+          )}
+        </div>
+      )}
+
+      <div style={{display:"flex",gap:16,marginBottom:20,animation:shake?"shake 0.4s":"none"}}>
         {[0,1,2,3].map(i=><div key={i} style={{width:16,height:16,borderRadius:"50%",background:i<digits.length?"#818cf8":"transparent",border:"2px solid #818cf8"}}/>)}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(3,72px)",gap:12}}>
@@ -109,7 +150,7 @@ function PinScreen({onUnlock,isSetup}){
 }
 
 // ── Settings Screen ───────────────────────────────────────────────────────────
-function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalCopy,setGlobalCopy,notes,setNotes,reminderCount}){
+function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalCopy,setGlobalCopy,notes,setNotes,reminderCount,biometricEnabled,setBiometricEnabled}){
   const [changingPin,setChangingPin]=useState(false);
   const [newPin,setNewPin]=useState("");
   const [confirmPin,setConfirmPin]=useState("");
@@ -135,14 +176,19 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
     const dateStr=new Date().toISOString().split("T")[0];
     const fileName=`quicknotes-backup-${dateStr}.json`;
     const jsonStr=JSON.stringify(backupData,null,2);
-    let savedLocation="your Downloads folder";
+    let savedLocation="";
+    const FS=window.Capacitor?.Plugins?.Filesystem;
 
-    if(window.Capacitor?.Plugins?.Filesystem){
+    if(FS){
       try{
-        const result=await window.Capacitor.Plugins.Filesystem.writeFile({path:fileName,data:jsonStr,directory:"EXTERNAL",encoding:"utf8",recursive:true});
-        savedLocation=result?.uri||"Files app → Internal storage → Android/data/[app id]/files";
+        // Request permission explicitly first — required on Android 11+ for EXTERNAL writes
+        if(FS.requestPermissions){
+          try{ await FS.requestPermissions(); }catch(permErr){ /* some platforms don't need this, ignore */ }
+        }
+        const result=await FS.writeFile({path:fileName,data:jsonStr,directory:"EXTERNAL",encoding:"utf8",recursive:true});
+        savedLocation=result?.uri||"";
       }catch(err){
-        alert("Could not save file: "+(err?.message||err)+"\n\nMake sure @capacitor/filesystem is installed and synced, then rebuild.");
+        alert("❌ Backup write failed.\n\nError: "+(err?.message||JSON.stringify(err))+"\n\nThis is the exact error — please copy/screenshot this and send it back so it can be fixed precisely.");
         return;
       }
     } else {
@@ -159,13 +205,24 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
       }
     }
 
-    alert(`Step 1 done: "${fileName}" saved to ${savedLocation}.\n\nNext: Gmail will open addressed to ${email}. Tap the 📎 attach icon in Gmail and pick that file before hitting send.`);
+    if(savedLocation){
+      alert(`✅ File saved.\nPath: ${savedLocation}\n\nNext: a Share screen will open — choose Gmail and the file will already be attached.`);
+    }
 
-    setTimeout(()=>{
+    setTimeout(async()=>{
+      const Share=window.Capacitor?.Plugins?.Share;
+      if(Share && savedLocation){
+        try{
+          await Share.share({title:"My QuickNotes Backup",text:`Backup file from ${dateStr}. Sending to: ${email}`,url:savedLocation,dialogTitle:"Send backup via..."});
+          return;
+        }catch(err){
+          alert("Share failed: "+(err?.message||JSON.stringify(err))+"\n\nOpening Gmail without attachment — attach manually from: "+savedLocation);
+        }
+      }
       const subject=encodeURIComponent("My QuickNotes Backup - "+dateStr);
-      const body=encodeURIComponent(`Backup attached.\n\nFile name to attach: ${fileName}\nLocation: ${savedLocation}\n\nOpen Files app or Gmail's attach screen, look in Documents, and pick this file.`);
+      const body=encodeURIComponent(`Backup created on ${dateStr}.\n\nFile location: ${savedLocation||"see Downloads"}\n\nAttach this file manually if it wasn't auto-attached.`);
       window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${subject}&body=${body}`,"_blank");
-    },1200);
+    },800);
   };
 
   const doLocalBackupOnly=async()=>{
@@ -175,26 +232,22 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
     const jsonStr=JSON.stringify(backupData,null,2);
     const FS=window.Capacitor?.Plugins?.Filesystem;
 
-    // Try Capacitor Filesystem plugin first (works inside APK)
     if(FS){
       try{
-        const result=await FS.writeFile({
-          path:fileName,
-          data:jsonStr,
-          directory:"EXTERNAL",   // public-ish app storage, visible via Files app > Android/data
-          encoding:"utf8",
-          recursive:true
-        });
-        alert(`Saved successfully.\n\nFile: ${fileName}\nFull path: ${result?.uri||"(path not returned by plugin)"}\n\nOpen your phone's "Files" app, tap the 3-line menu, choose "Show internal storage", then browse to Android/data/[app id]/files to find it.`);
+        if(FS.requestPermissions){
+          try{ await FS.requestPermissions(); }catch{ /* ignore if not needed on this platform */ }
+        }
+        const result=await FS.writeFile({path:fileName,data:jsonStr,directory:"EXTERNAL",encoding:"utf8",recursive:true});
+        alert(`✅ Saved successfully.\n\nFile: ${fileName}\nFull path:\n${result?.uri||"(path not returned by plugin)"}\n\nOpen your phone's Files app to find it — usually under Internal Storage → Android/data/com.naresh.quicknotes/files`);
         return;
       }catch(err){
-        alert("Filesystem save failed: "+(err?.message||JSON.stringify(err))+"\n\nThis usually means @capacitor/filesystem isn't installed/synced yet, or storage permission was denied. Falling back to browser download (won't work inside the APK).");
+        alert("❌ Filesystem save failed.\n\nError: "+(err?.message||JSON.stringify(err))+"\n\nPlease copy/screenshot this exact error and send it back.");
+        return;
       }
     } else {
-      alert("Capacitor Filesystem plugin not detected in this build.\n\nRun on your laptop:\nnpm install @capacitor/filesystem\nnpx cap sync\n\nThen rebuild the APK. Falling back to browser download for now (only works in a real browser tab, not inside the installed app).");
+      alert("Capacitor Filesystem plugin not detected in this build.\n\nRun on your laptop:\nnpm install @capacitor/filesystem\nnpx cap sync\n\nThen rebuild the APK.");
     }
 
-    // Fallback for PWA/browser — works on Chrome/Safari, NOT inside APK WebView
     try{
       const blob=new Blob([jsonStr],{type:"application/json"});
       const url=URL.createObjectURL(blob);
@@ -202,7 +255,7 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
       a.href=url;a.download=fileName;
       document.body.appendChild(a);a.click();document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      alert(`If you're on a website (not the installed app), check your Downloads folder for "${fileName}".\n\nNote: this download method does NOT work inside the installed APK — only in a normal browser tab.`);
+      alert(`If you're on a website (not the installed app), check your Downloads folder for "${fileName}".`);
     }catch(err){
       alert("Backup failed: "+(err?.message||err));
     }
@@ -277,6 +330,7 @@ function SettingsScreen({onClose,dark,setDark,lockEnabled,setLockEnabled,globalC
         {/* Security */}
         <div style={{fontSize:11,fontWeight:700,color:subText,textTransform:"uppercase",letterSpacing:1,padding:"16px 0 8px"}}>Security</div>
         {row("🔐","PIN Lock","Require PIN when opening the app",<Toggle value={lockEnabled} onChange={v=>{setLockEnabled(v);localStorage.setItem(LOCK_KEY,v);}}/>)}
+        {lockEnabled&&row("👆","Fingerprint / Face Unlock","Try biometric first, PIN as backup (Android app only)",<Toggle value={biometricEnabled} onChange={v=>{setBiometricEnabled(v);localStorage.setItem(BIOMETRIC_KEY,v);}}/>)}
 
         {lockEnabled&&(
           <div style={{background:card,borderRadius:12,padding:14,marginTop:8}}>
@@ -536,7 +590,7 @@ function ReminderCard({note,onEdit,onDismiss,dark}){
 }
 
 // ── Note Card ─────────────────────────────────────────────────────────────────
-function NoteCard({note,dark,globalCopy,onEdit,onDelete,onPin,onCopy,onShare,onToggleItem}){
+function NoteCard({note,dark,globalCopy,onEdit,onDelete,onPin,onCopy,onShare,onToggleItem,onMoveUp,onMoveDown,isFirst,isLast}){
   const [expanded,setExpanded]=useState(false);
   const col=CAT_COLORS[note.category]||CAT_COLORS.Personal;
   const card=dark?"#1f2937":"#fff";
@@ -565,6 +619,10 @@ function NoteCard({note,dark,globalCopy,onEdit,onDelete,onPin,onCopy,onShare,onT
             </div>
           </div>
           <div style={{display:"flex",gap:4}}>
+            <div style={{display:"flex",flexDirection:"column",gap:2}}>
+              <button onClick={()=>onMoveUp(note.id)} disabled={isFirst} style={{background:dark?"#374151":"#f9fafb",border:"none",borderRadius:6,width:32,height:15,cursor:isFirst?"default":"pointer",fontSize:9,opacity:isFirst?0.3:1,display:"flex",alignItems:"center",justifyContent:"center"}}>▲</button>
+              <button onClick={()=>onMoveDown(note.id)} disabled={isLast} style={{background:dark?"#374151":"#f9fafb",border:"none",borderRadius:6,width:32,height:15,cursor:isLast?"default":"pointer",fontSize:9,opacity:isLast?0.3:1,display:"flex",alignItems:"center",justifyContent:"center"}}>▼</button>
+            </div>
             <button onClick={()=>onPin(note.id)} style={{background:note.pinned?"#ede9fe":dark?"#374151":"#f9fafb",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:14}}>📌</button>
             <button onClick={()=>onEdit(note)} style={{background:dark?"#374151":"#f9fafb",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:14}}>✏️</button>
             <button onClick={()=>onDelete(note.id)} style={{background:dark?"#450a0a":"#fff1f2",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:14}}>🗑️</button>
@@ -625,10 +683,30 @@ function NoteEditor({note,onSave,onClose,allNotes,dark,isNew}){
   const [newItem,setNewItem]=useState("");
   const [showReminder,setShowReminder]=useState(note?._openReminder||false);
   const [reminder,setReminder]=useState(note?.reminder||null);
+  const [pasteSuggestion,setPasteSuggestion]=useState(null);
   useEffect(()=>{if(!note?.id)setTitle(getDefaultTitle(allNotes,type));},[type]);
   const addItem=()=>{if(!newItem.trim())return;setItems(p=>[...p,{id:Date.now(),text:newItem.trim(),done:false}]);setNewItem("");};
   const save=()=>onSave({id:isNew?Date.now():note?.id||Date.now(),title:title.trim()||getDefaultTitle(allNotes,type),content,type,category,items,pinned:note?.pinned||false,created:note?.created||Date.now(),reminder});
   const bg=dark?"#111827":"#fff";const textColor=dark?"#f9fafb":"#111";const borderCol=dark?"#374151":"#e5e7eb";const subText=dark?"#9ca3af":"#6b7280";
+
+  const handlePaste=(e)=>{
+    const pasted=e.clipboardData?.getData("text")||"";
+    const lines=pasted.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    // Only suggest if it looks like a real list: 2+ short lines, no single line is super long (i.e. not a paragraph)
+    const looksLikeList = lines.length>=2 && lines.every(l=>l.length<60) && type==="copy";
+    if(looksLikeList){
+      setPasteSuggestion(lines);
+    }
+  };
+
+  const convertPasteToChecklist=()=>{
+    if(!pasteSuggestion)return;
+    const newItems=pasteSuggestion.map(text=>({id:Date.now()+Math.random(),text,done:false}));
+    setItems(p=>[...p,...newItems]);
+    setType("checklist");
+    setContent("");
+    setPasteSuggestion(null);
+  };
 
   return(
     <div style={{position:"fixed",inset:0,background:bg,zIndex:100,display:"flex",flexDirection:"column"}}>
@@ -656,8 +734,24 @@ function NoteEditor({note,onSave,onClose,allNotes,dark,isNew}){
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
           {CATEGORIES.filter(c=>c!=="All").map(c=>{const col=CAT_COLORS[c];return<button key={c} onClick={()=>setCategory(c)} style={{padding:"5px 12px",borderRadius:20,border:"none",cursor:"pointer",background:category===c?col.dot:dark?col.bgD:col.bg,color:category===c?"#fff":dark?col.textD:col.text,fontWeight:600,fontSize:12}}>{c}</button>;})}
         </div>
+        {pasteSuggestion&&(
+          <div style={{background:dark?"#1e3a5f":"#dbeafe",border:`2px solid ${dark?"#3b82f6":"#93c5fd"}`,borderRadius:12,padding:14,marginBottom:16}}>
+            <div style={{fontWeight:700,fontSize:14,color:dark?"#93c5fd":"#1e40af",marginBottom:6}}>📋 This looks like a list!</div>
+            <div style={{fontSize:12,color:dark?"#bfdbfe":"#1e40af",marginBottom:10}}>
+              Found {pasteSuggestion.length} items: {pasteSuggestion.slice(0,3).join(", ")}{pasteSuggestion.length>3?"...":""}
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={convertPasteToChecklist} style={{flex:1,background:"#4f46e5",color:"#fff",border:"none",borderRadius:8,padding:"8px",fontWeight:700,fontSize:13,cursor:"pointer"}}>
+                ☑️ Make Checklist
+              </button>
+              <button onClick={()=>setPasteSuggestion(null)} style={{flex:1,background:dark?"#374151":"#fff",color:subText,border:"none",borderRadius:8,padding:"8px",fontWeight:600,fontSize:13,cursor:"pointer"}}>
+                Keep as Text
+              </button>
+            </div>
+          </div>
+        )}
         {type==="copy"
-          ?<textarea value={content} onChange={e=>setContent(e.target.value)} placeholder="Write your note here..." rows={10} style={{width:"100%",boxSizing:"border-box",border:`2px solid ${borderCol}`,borderRadius:12,padding:14,fontSize:15,fontFamily:"inherit",resize:"vertical",outline:"none",color:textColor,lineHeight:1.6,background:dark?"#1f2937":"#fff"}}/>
+          ?<textarea value={content} onChange={e=>setContent(e.target.value)} onPaste={handlePaste} placeholder="Write your note here... (paste a list to auto-convert to checklist)" rows={10} style={{width:"100%",boxSizing:"border-box",border:`2px solid ${borderCol}`,borderRadius:12,padding:14,fontSize:15,fontFamily:"inherit",resize:"vertical",outline:"none",color:textColor,lineHeight:1.6,background:dark?"#1f2937":"#fff"}}/>
           :<div>
             {items.map((item,idx)=>(
               <div key={item.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${borderCol}`}}>
@@ -702,11 +796,13 @@ function ImportPopup({note,onAdd,onDismiss,dark}){
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function QuickNotes(){
   const [lockEnabled,setLockEnabled] =useState(()=>localStorage.getItem(LOCK_KEY)==="true");
+  const [biometricEnabled,setBiometricEnabled] =useState(()=>localStorage.getItem(BIOMETRIC_KEY)==="true");
   const [locked,setLocked]           =useState(()=>localStorage.getItem(LOCK_KEY)==="true");
   const [setupPin,setSetupPin]       =useState(!localStorage.getItem(PIN_KEY));
   const [dark,setDark]               =useState(()=>localStorage.getItem(DARK_KEY)==="true");
   const [notes,setNotes]             =useState(()=>{try{return JSON.parse(localStorage.getItem(NOTES_KEY))||SAMPLE_NOTES;}catch{return SAMPLE_NOTES;}});
   const [standaloneReminders,setStandaloneReminders]=useState(()=>{try{return JSON.parse(localStorage.getItem(REMINDERS_KEY))||[];}catch{return [];}});
+  const [lastDeleted,setLastDeleted] =useState(null);
   const [toast,setToast]             =useState(null);
   const [search,setSearch]           =useState("");
   const [activeCat,setActiveCat]     =useState("All");
@@ -760,7 +856,7 @@ export default function QuickNotes(){
     check();const interval=setInterval(check,30000);return()=>clearInterval(interval);
   },[notes,standaloneReminders]);
 
-  const showToast=msg=>setToast(msg);
+  const showToast=msg=>{setLastDeleted(null);setToast(msg);};
   const fallbackCopy=text=>{
     const ta=document.createElement("textarea");ta.value=text;ta.style.cssText="position:fixed;top:0;left:0;opacity:0;pointer-events:none";
     document.body.appendChild(ta);ta.focus();ta.select();
@@ -791,7 +887,24 @@ export default function QuickNotes(){
   };
   const toggleItem=(nId,iId)=>setNotes(p=>p.map(n=>n.id===nId?{...n,items:n.items.map(i=>i.id===iId?{...i,done:!i.done}:i)}:n));
   const togglePin=id=>setNotes(p=>p.map(n=>n.id===id?{...n,pinned:!n.pinned}:n));
-  const deleteNote=id=>setNotes(p=>p.filter(n=>n.id!==id));
+  const deleteNote=id=>{
+    const note=notes.find(n=>n.id===id);
+    if(!note)return;
+    if(!window.confirm(`Delete "${note.title}"?\n\nThis note will be removed.`))return;
+    const idx=notes.findIndex(n=>n.id===id);
+    setLastDeleted({note,idx});
+    setNotes(p=>p.filter(n=>n.id!==id));
+    setToast(`"${note.title}" deleted`);
+  };
+  const undoDelete=()=>{
+    if(!lastDeleted)return;
+    setNotes(p=>{
+      const next=[...p];
+      next.splice(Math.min(lastDeleted.idx,next.length),0,lastDeleted.note);
+      return next;
+    });
+    setLastDeleted(null);
+  };
   const dismissReminder=id=>{
     if(standaloneReminders.find(r=>r.id===id)){
       setStandaloneReminders(p=>p.filter(r=>r.id!==id));
@@ -810,20 +923,36 @@ export default function QuickNotes(){
     }
   };
   const saveNote=note=>{setNotes(p=>p.find(n=>n.id===note.id)?p.map(n=>n.id===note.id?note:n):[note,...p]);setEditing(null);};
+  const moveNote=(id,direction)=>{
+    setNotes(prev=>{
+      const idx=prev.findIndex(n=>n.id===id);
+      if(idx===-1)return prev;
+      const targetIdx=direction==="up"?idx-1:idx+1;
+      if(targetIdx<0||targetIdx>=prev.length)return prev;
+      const next=[...prev];
+      [next[idx],next[targetIdx]]=[next[targetIdx],next[idx]];
+      return next;
+    });
+  };
 
   const noteReminders=notes.filter(n=>n.reminder?.active);
   const activeReminders=[...standaloneReminders.map(r=>({id:r.id,title:r.label,reminder:r,_standalone:true})),...noteReminders];
   const reminderCount=activeReminders.length;
   const filtered=notes
+    .map((n,idx)=>({...n,_idx:idx}))
     .filter(n=>activeCat==="All"||n.category===activeCat)
     .filter(n=>!search||n.title.toLowerCase().includes(search.toLowerCase())||n.content.toLowerCase().includes(search.toLowerCase()))
-    .sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0));
+    .sort((a,b)=>{
+      const pinDiff=(b.pinned?1:0)-(a.pinned?1:0);
+      if(pinDiff!==0)return pinDiff;
+      return a._idx-b._idx;
+    });
   const bg=dark?"#111827":"#f5f3ff";
   const card=dark?"#1f2937":"#fff";
   const subText=dark?"#9ca3af":"#6b7280";
 
-  if(locked&&lockEnabled)return<PinScreen isSetup={setupPin} onUnlock={()=>{setLocked(false);setSetupPin(false);}}/>;
-  if(showSettings)return<SettingsScreen onClose={()=>setShowSettings(false)} dark={dark} setDark={setDark} lockEnabled={lockEnabled} setLockEnabled={setLockEnabled} globalCopy={globalCopy} setGlobalCopy={setGlobalCopy} notes={notes} setNotes={setNotes} reminderCount={reminderCount}/>;
+  if(locked&&lockEnabled)return<PinScreen isSetup={setupPin} onUnlock={()=>{setLocked(false);setSetupPin(false);}} biometricEnabled={biometricEnabled}/>;
+  if(showSettings)return<SettingsScreen onClose={()=>setShowSettings(false)} dark={dark} setDark={setDark} lockEnabled={lockEnabled} setLockEnabled={setLockEnabled} globalCopy={globalCopy} setGlobalCopy={setGlobalCopy} notes={notes} setNotes={setNotes} reminderCount={reminderCount} biometricEnabled={biometricEnabled} setBiometricEnabled={setBiometricEnabled}/>;
   if(editingStandaloneReminder)return<ReminderModal note={{title:editingStandaloneReminder.title,reminder:editingStandaloneReminder.reminder}} dark={dark}
     onClose={()=>setEditingStandaloneReminder(null)}
     onSave={r=>{
@@ -929,9 +1058,12 @@ export default function QuickNotes(){
               <div style={{fontWeight:600}}>No notes yet</div>
               <div style={{fontSize:13}}>Tap + to create your first note</div>
             </div>
-          :filtered.map(note=><NoteCard key={note.id} note={note} dark={dark} globalCopy={globalCopy}
+          :filtered.map((note,i)=><NoteCard key={note.id} note={note} dark={dark} globalCopy={globalCopy}
               onEdit={n=>{setEditing(n);setIsNew(false);}} onDelete={deleteNote} onPin={togglePin}
-              onCopy={copyNote} onShare={shareNote} onToggleItem={toggleItem}/>)
+              onCopy={copyNote} onShare={shareNote} onToggleItem={toggleItem}
+              onMoveUp={id=>moveNote(id,"up")} onMoveDown={id=>moveNote(id,"down")}
+              isFirst={activeCat!=="All"||search?true:i===0}
+              isLast={activeCat!=="All"||search?true:i===filtered.length-1}/>)
         }
       </div>
 
@@ -957,7 +1089,7 @@ export default function QuickNotes(){
       )}
       <button onClick={()=>setFabOpen(p=>!p)} style={{position:"fixed",bottom:64,right:20,width:56,height:56,borderRadius:"50%",border:"none",background:"linear-gradient(135deg,#4f46e5,#7c3aed)",color:"#fff",fontSize:28,cursor:"pointer",boxShadow:"0 4px 20px rgba(79,70,229,0.5)",display:"flex",alignItems:"center",justifyContent:"center",transition:"transform 0.2s",transform:fabOpen?"rotate(45deg)":"rotate(0deg)",zIndex:90}}>+</button>
 
-      {toast&&<Toast msg={toast} onDone={()=>setToast(null)}/>}
+      {toast&&<Toast msg={toast} onDone={()=>{setToast(null);setLastDeleted(null);}} actionLabel={lastDeleted?"Undo":null} onAction={undoDelete}/>}
     </div>
   );
 }
