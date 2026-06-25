@@ -689,13 +689,33 @@ function NoteEditor({note,onSave,onClose,allNotes,dark,isNew}){
   const save=()=>onSave({id:isNew?Date.now():note?.id||Date.now(),title:title.trim()||getDefaultTitle(allNotes,type),content,type,category,items,pinned:note?.pinned||false,created:note?.created||Date.now(),reminder});
   const bg=dark?"#111827":"#fff";const textColor=dark?"#f9fafb":"#111";const borderCol=dark?"#374151":"#e5e7eb";const subText=dark?"#9ca3af":"#6b7280";
 
+  // Strips common list markers like "○ ", "- ", "* ", "1. ", "1) " etc. from the start of a line
+  const stripListMarker=(line)=>line.replace(/^[\s]*[○●•◦\-\*\u2022\u25CB\u25CF]+\s*/,"").replace(/^[\s]*\d+[\.\)]\s*/,"").trim();
+
+  const detectList=(text)=>{
+    const rawLines=text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    if(rawLines.length<2)return null;
+    const cleaned=rawLines.map(stripListMarker).filter(Boolean);
+    if(cleaned.length<2)return null;
+    const looksLikeList = cleaned.every(l=>l.length<80);
+    return looksLikeList?cleaned:null;
+  };
+
   const handlePaste=(e)=>{
     const pasted=e.clipboardData?.getData("text")||"";
-    const lines=pasted.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
-    // Only suggest if it looks like a real list: 2+ short lines, no single line is super long (i.e. not a paragraph)
-    const looksLikeList = lines.length>=2 && lines.every(l=>l.length<60) && type==="copy";
-    if(looksLikeList){
-      setPasteSuggestion(lines);
+    if(!pasted)return; // some Android WebViews don't populate clipboardData — onChange fallback below catches this
+    const result=detectList(pasted);
+    if(result && type==="copy") setPasteSuggestion(result);
+  };
+
+  const handleContentChange=(e)=>{
+    const val=e.target.value;
+    setContent(val);
+    // Fallback: if onPaste didn't fire (common in Capacitor WebView / share-intent text),
+    // detect a list shape directly from the textarea's new value once it has 2+ lines.
+    if(type==="copy" && !pasteSuggestion){
+      const result=detectList(val);
+      if(result) setPasteSuggestion(result);
     }
   };
 
@@ -724,12 +744,20 @@ function NoteEditor({note,onSave,onClose,allNotes,dark,isNew}){
         </div>
       )}
       <div style={{flex:1,overflow:"auto",padding:16}}>
-        <div style={{display:"flex",gap:8,marginBottom:16}}>
+        <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
           {["copy","checklist"].map(t=>(
             <button key={t} onClick={()=>setType(t)} style={{padding:"7px 16px",borderRadius:20,border:"none",cursor:"pointer",background:type===t?"#4f46e5":dark?"#374151":"#f3f4f6",color:type===t?"#fff":subText,fontWeight:600,fontSize:13}}>
               {t==="copy"?"📋 Copy mode":"☑️ Checklist"}
             </button>
           ))}
+          {type==="copy" && content.split(/\r?\n/).filter(l=>l.trim()).length>=2 && (
+            <button onClick={()=>{
+              const result=detectList(content)||content.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+              setPasteSuggestion(result);
+            }} style={{padding:"7px 16px",borderRadius:20,border:"none",cursor:"pointer",background:dark?"#1e3a5f":"#dbeafe",color:dark?"#93c5fd":"#1e40af",fontWeight:600,fontSize:13}}>
+              ✨ Split into checklist
+            </button>
+          )}
         </div>
         <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
           {CATEGORIES.filter(c=>c!=="All").map(c=>{const col=CAT_COLORS[c];return<button key={c} onClick={()=>setCategory(c)} style={{padding:"5px 12px",borderRadius:20,border:"none",cursor:"pointer",background:category===c?col.dot:dark?col.bgD:col.bg,color:category===c?"#fff":dark?col.textD:col.text,fontWeight:600,fontSize:12}}>{c}</button>;})}
@@ -751,7 +779,7 @@ function NoteEditor({note,onSave,onClose,allNotes,dark,isNew}){
           </div>
         )}
         {type==="copy"
-          ?<textarea value={content} onChange={e=>setContent(e.target.value)} onPaste={handlePaste} placeholder="Write your note here... (paste a list to auto-convert to checklist)" rows={10} style={{width:"100%",boxSizing:"border-box",border:`2px solid ${borderCol}`,borderRadius:12,padding:14,fontSize:15,fontFamily:"inherit",resize:"vertical",outline:"none",color:textColor,lineHeight:1.6,background:dark?"#1f2937":"#fff"}}/>
+          ?<textarea value={content} onChange={handleContentChange} onPaste={handlePaste} placeholder="Write your note here... (paste a list to auto-convert to checklist)" rows={10} style={{width:"100%",boxSizing:"border-box",border:`2px solid ${borderCol}`,borderRadius:12,padding:14,fontSize:15,fontFamily:"inherit",resize:"vertical",outline:"none",color:textColor,lineHeight:1.6,background:dark?"#1f2937":"#fff"}}/>
           :<div>
             {items.map((item,idx)=>(
               <div key={item.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${borderCol}`}}>
