@@ -84,18 +84,24 @@ function PinScreen({onUnlock,isSetup,biometricEnabled}){
   const stored=localStorage.getItem(PIN_KEY)||DEFAULT_PIN;
 
   const tryBiometric=async()=>{
-    const Bio=window.Capacitor?.Plugins?.BiometricAuth;
-    if(!Bio){setBioStatus("unavailable");return;}
     setBioStatus("trying");
     try{
+      // v10 of @aparajita/capacitor-biometric-auth registers as "BiometricAuth" in Capacitor
+      const Bio=window.Capacitor?.Plugins?.BiometricAuth;
+      if(!Bio){setBioStatus("unavailable");return;}
+      // First check if biometry is actually available on this device
+      const check=await Bio.checkBiometry();
+      if(!check?.isAvailable){setBioStatus("unavailable");return;}
       await Bio.authenticate({
         reason:"Unlock QuickNotes",
         cancelTitle:"Use PIN instead",
-        allowDeviceCredential:true
+        allowDeviceCredential:false,
+        androidMaxAttempts:3
       });
       setBioStatus("success");
       onUnlock();
     }catch(err){
+      // err.code === "biometryNotAvailable" | "biometryNotEnrolled" | "authenticationFailed" | "userCancel"
       setBioStatus("failed");
     }
   };
@@ -690,36 +696,52 @@ function NoteEditor({note,onSave,onClose,allNotes,dark,isNew}){
   const bg=dark?"#111827":"#fff";const textColor=dark?"#f9fafb":"#111";const borderCol=dark?"#374151":"#e5e7eb";const subText=dark?"#9ca3af":"#6b7280";
 
   // Strips common list markers like "○ ", "- ", "* ", "1. ", "1) " etc. from the start of a line
-  const stripListMarker=(line)=>line.replace(/^[\s]*[○●•◦\-\*\u2022\u25CB\u25CF]+\s*/,"").replace(/^[\s]*\d+[\.\)]\s*/,"").trim();
+  const stripListMarker=(line)=>{
+    return line
+      .replace(/^[\s]*[○●•◦\-\*•○●]+\s*/,"")
+      .replace(/^[\s]*\d+[\.\)]\s*/,"")
+      .trim();
+  };
 
   const detectList=(text)=>{
-    const rawLines=text.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
+    if(!text||typeof text!=="string")return null;
+    const rawLines=text.split("\n");
     if(rawLines.length<2)return null;
-    const cleaned=rawLines.map(stripListMarker).filter(Boolean);
+    const lines=rawLines.map(l=>l.trim()).filter(Boolean);
+    if(lines.length<2)return null;
+    const cleaned=lines.map(stripListMarker).filter(Boolean);
     if(cleaned.length<2)return null;
-    const looksLikeList = cleaned.every(l=>l.length<80);
-    return looksLikeList?cleaned:null;
+    return cleaned.every(l=>l.length>0&&l.length<120)?cleaned:null;
   };
 
   const handlePaste=(e)=>{
-    const pasted=e.clipboardData?.getData("text")||"";
-    if(!pasted)return; // some Android WebViews don't populate clipboardData — onChange fallback below catches this
-    const result=detectList(pasted);
-    if(result && type==="copy") setPasteSuggestion(result);
+    try{
+      const clipData=e.clipboardData||window.clipboardData;
+      const pasted=clipData?.getData("text")||clipData?.getData("text/plain")||"";
+      if(pasted && pasted.indexOf("\n")!==-1 && type==="copy"){
+        const result=detectList(pasted);
+        if(result){
+          e.preventDefault();
+          setContent(pasted);
+          setPasteSuggestion(result);
+          return;
+        }
+      }
+    }catch(err){
+      // clipboard read failed - let onChange fallback handle it
+    }
   };
 
   const handleContentChange=(e)=>{
     const val=e.target.value;
     setContent(val);
-    // Fallback: if onPaste didn't fire (common in Capacitor WebView / share-intent text),
-    // detect a list shape directly from the textarea's new value once it has 2+ lines.
-    if(type==="copy" && !pasteSuggestion){
+    if(type==="copy"&&!pasteSuggestion&&val.indexOf("\n")!==-1){
       const result=detectList(val);
-      if(result) setPasteSuggestion(result);
+      if(result)setPasteSuggestion(result);
     }
   };
 
-  const convertPasteToChecklist=()=>{
+    const convertPasteToChecklist=()=>{
     if(!pasteSuggestion)return;
     const newItems=pasteSuggestion.map(text=>({id:Date.now()+Math.random(),text,done:false}));
     setItems(p=>[...p,...newItems]);
