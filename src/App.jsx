@@ -1,5 +1,15 @@
 import { useState, useEffect } from "react";
 
+// Biometric auth — imported as ES module (required for @aparajita/capacitor-biometric-auth v10)
+// This import is safe on web too — it gracefully returns null when not in a native context
+let BiometricAuth = null;
+try {
+  // Dynamic import so the web PWA doesn't crash if the native plugin isn't present
+  import('@aparajita/capacitor-biometric-auth').then(m => {
+    BiometricAuth = m.BiometricAuth;
+  }).catch(() => { BiometricAuth = null; });
+} catch(e) { BiometricAuth = null; }
+
 const PIN_KEY     = "qnotes_pin";
 const NOTES_KEY   = "qnotes_data";
 const DARK_KEY    = "qnotes_dark";
@@ -86,23 +96,48 @@ function PinScreen({onUnlock,isSetup,biometricEnabled}){
   const tryBiometric=async()=>{
     setBioStatus("trying");
     try{
-      // v10 of @aparajita/capacitor-biometric-auth registers as "BiometricAuth" in Capacitor
-      const Bio=window.Capacitor?.Plugins?.BiometricAuth;
-      if(!Bio){setBioStatus("unavailable");return;}
-      // First check if biometry is actually available on this device
-      const check=await Bio.checkBiometry();
-      if(!check?.isAvailable){setBioStatus("unavailable");return;}
+      // Use the ES module import (required for @aparajita/capacitor-biometric-auth v10)
+      // Falls back gracefully if not in native APK context
+      const Bio=BiometricAuth||window.Capacitor?.Plugins?.BiometricAuth;
+      if(!Bio){
+        setBioStatus("unavailable");
+        return;
+      }
+
+      // Check if biometry is enrolled and available on this specific device
+      let available=false;
+      try{
+        const check=await Bio.checkBiometry();
+        available=check?.isAvailable===true||check?.biometryType>0;
+      }catch{available=false;}
+
+      if(!available){
+        setBioStatus("unavailable");
+        return;
+      }
+
+      // This is what actually triggers the fingerprint/face scan UI on the device
       await Bio.authenticate({
         reason:"Unlock QuickNotes",
         cancelTitle:"Use PIN instead",
         allowDeviceCredential:false,
-        androidMaxAttempts:3
+        androidTitle:"QuickNotes",
+        androidSubtitle:"Touch the fingerprint sensor or look at the camera",
       });
+
+      // If we reach here, authentication succeeded
       setBioStatus("success");
       onUnlock();
     }catch(err){
-      // err.code === "biometryNotAvailable" | "biometryNotEnrolled" | "authenticationFailed" | "userCancel"
-      setBioStatus("failed");
+      // Common codes: userCancel, authenticationFailed, biometryNotAvailable, biometryNotEnrolled
+      const code=err?.code||err?.message||"";
+      if(code.includes("userCancel")||code.includes("cancel")){
+        setBioStatus("failed"); // user cancelled - show retry button
+      } else if(code.includes("NotEnrolled")||code.includes("notEnrolled")){
+        setBioStatus("notenrolled");
+      } else {
+        setBioStatus("failed");
+      }
     }
   };
 
@@ -132,9 +167,24 @@ function PinScreen({onUnlock,isSetup,biometricEnabled}){
 
       {biometricEnabled&&!isSetup&&(
         <div style={{marginBottom:24,textAlign:"center"}}>
-          {bioStatus==="trying"&&<div style={{color:"#a5b4fc",fontSize:13}}>👆 Checking fingerprint/face...</div>}
-          {(bioStatus==="failed"||bioStatus==="unavailable")&&(
-            <button onClick={tryBiometric} style={{background:"rgba(255,255,255,0.12)",border:"1px solid #818cf8",borderRadius:20,padding:"8px 18px",color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+          {bioStatus==="trying"&&(
+            <div style={{color:"#a5b4fc",fontSize:14,fontWeight:600}}>
+              👆 Waiting for fingerprint or face scan...
+            </div>
+          )}
+          {bioStatus==="notenrolled"&&(
+            <div style={{color:"#fca5a5",fontSize:13,padding:"8px 16px"}}>
+              No fingerprint/face enrolled on this device.<br/>
+              Go to phone Settings → Security → Biometrics to enroll.
+            </div>
+          )}
+          {bioStatus==="unavailable"&&(
+            <div style={{color:"#fca5a5",fontSize:13}}>
+              Biometric not available on this device
+            </div>
+          )}
+          {bioStatus==="failed"&&(
+            <button onClick={tryBiometric} style={{background:"rgba(255,255,255,0.12)",border:"1px solid #818cf8",borderRadius:20,padding:"10px 22px",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer"}}>
               👆 Try Fingerprint / Face Again
             </button>
           )}
@@ -735,13 +785,18 @@ function NoteEditor({note,onSave,onClose,allNotes,dark,isNew}){
   const handleContentChange=(e)=>{
     const val=e.target.value;
     setContent(val);
-    if(type==="copy"&&!pasteSuggestion&&val.indexOf("\n")!==-1){
+    // Always re-run detection on every change - removes stale !pasteSuggestion guard
+    // that prevented re-detection after first use
+    if(type==="copy"&&val.indexOf("\n")!==-1){
       const result=detectList(val);
       if(result)setPasteSuggestion(result);
+      else setPasteSuggestion(null);
+    } else if(type==="copy"){
+      setPasteSuggestion(null);
     }
   };
 
-    const convertPasteToChecklist=()=>{
+  const convertPasteToChecklist=()=>{
     if(!pasteSuggestion)return;
     const newItems=pasteSuggestion.map(text=>({id:Date.now()+Math.random(),text,done:false}));
     setItems(p=>[...p,...newItems]);
